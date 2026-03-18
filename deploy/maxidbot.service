@@ -1,0 +1,15 @@
+[Unit]
+Description=MaxIDBot
+After=network.target
+
+[Service]
+Type=simple
+User=bot
+WorkingDirectory=/opt/max-id-bot
+ExecStart=/opt/max-id-bot/venv/bin/python bot.py
+Restart=always
+RestartSec=5
+EnvironmentFile=/opt/max-id-bot/.env
+
+[Install]
+WantedBy=multi-user.target
