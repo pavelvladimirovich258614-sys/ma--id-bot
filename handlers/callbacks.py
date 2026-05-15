@@ -3,16 +3,39 @@
 """
 import asyncio
 import logging
+import re
 import time
 from maxapi.types import MessageCallback
 from maxapi.enums.parse_mode import ParseMode
 from keyboards.main_menu import main_menu_keyboard
+from middleware.subscription import require_subscription
 
 logger = logging.getLogger(__name__)
 
 # Защита от спама: храним последний callback для каждого чата
 _last_callback = {}
 CALLBACK_DUPLICATE_TIMEOUT = 2  # секунды
+MAX_BIZ_LINK_RE = re.compile(r'max\.ru/(id\d+_biz)')
+
+
+def resolve_channel_link_fallback(url):
+    """
+    Возвращает username канала из ссылки, сохраняя старую логику разбора.
+
+    Args:
+        url: Ссылка, username или ID канала.
+    """
+    m = re.search(r'max\.ru/(id\d+_biz)', url)
+    if m:
+        return m.group(1)
+
+    if 'max.ru/' in url:
+        return url.split('/')[-1].strip()
+
+    if url.startswith('@'):
+        return url[1:]
+
+    return url.strip()
 
 
 def register_callback_handlers(dp):
@@ -24,6 +47,7 @@ def register_callback_handlers(dp):
     """
 
     @dp.message_callback()
+    @require_subscription
     async def on_callback(event: MessageCallback):
         """
         Обработчик всех callback событий.

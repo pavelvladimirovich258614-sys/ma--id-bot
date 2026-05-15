@@ -14,7 +14,9 @@ from maxapi.types import MessageCreated
 from maxapi.types.attachments.sticker import Sticker
 from maxapi.enums.parse_mode import ParseMode
 from maxapi.enums.message_link_type import MessageLinkType
+from handlers.callbacks import resolve_channel_link_fallback
 from keyboards.main_menu import dismiss_keyboard
+from middleware.subscription import require_subscription
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +60,7 @@ def register_message_handler(dp):
     """
 
     @dp.message_created()
+    @require_subscription
     async def on_message(event: MessageCreated):
         """
         Обработчик события message_created.
@@ -318,11 +321,7 @@ def register_message_handler(dp):
                 # Определяем тип запроса
                 if 'max.ru/' in text or text.startswith('@'):
                     # Извлекаем ник из ссылки
-                    search_query = text
-                    if 'max.ru/' in text:
-                        search_query = text.split('/')[-1].strip()
-                    if search_query.startswith('@'):
-                        search_query = search_query[1:]
+                    search_query = resolve_channel_link_fallback(text)
                     logger.info(f"Searching channel by username: {search_query}")
                 else:
                     # Пробуем как числовой ID

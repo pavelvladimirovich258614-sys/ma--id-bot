@@ -43,9 +43,18 @@ pip install -r requirements.txt
 ```bash
 # Создайте файл .env и добавьте токен
 BOT_TOKEN=ваш_токен
+CHANNEL_ID=id752703975446_biz
+CHANNEL_LINK=https://max.ru/id752703975446_biz
+SUBSCRIPTION_TEXT=Чтобы продолжить пользоваться ботом, подпишитесь на канал:
+API_BASE=https://platform-api.max.ru
 ```
 
 Токен можно получить на [business.max.ru](https://business.max.ru) в разделе «Чат-боты» → «Интеграция» → «Получить токен».
+
+Для проверки подписки бот должен быть администратором канала `CHANNEL_ID`.
+Первый запрос пользователя бесплатный, со второго запроса бот проверяет
+подписку через MAX API и показывает кнопку перехода на канал, если
+подписки нет.
 
 ## Запуск
 
@@ -65,10 +74,17 @@ max-id-bot/
 │   ├── callbacks.py    # Обработчики inline-кнопок (Пользователь, Бот, Чат, Канал, Стикер)
 │   ├── messages.py     # Обработчик стикеров и пересланных сообщений
 │   └── bot_added.py    # Обработчик добавления бота в чат/канал
+├── database/
+│   ├── __init__.py     # Пакет SQLite-хранилища
+│   └── storage.py      # Таблица users и операции init/get/update
+├── middleware/
+│   ├── __init__.py     # Пакет middleware
+│   └── subscription.py # Проверка подписки и кэш 5 минут
 ├── keyboards/
 │   ├── __init__.py     # Экспорт main_menu_keyboard
-│   └── main_menu.py    # Inline-клавиатура главного меню (2×2 + стикер)
-├── requirements.txt    # Зависимости: maxapi, python-dotenv
+│   ├── main_menu.py    # Inline-клавиатура главного меню (2×2 + стикер)
+│   └── subscription.py # Кнопка-ссылка на канал
+├── requirements.txt    # Зависимости: maxapi, python-dotenv, httpx, aiosqlite
 ├── .env                # Токен бота (создаётся пользователем, не в Git)
 ├── .gitignore          # Исключения для Git
 └── README.md           # Документация

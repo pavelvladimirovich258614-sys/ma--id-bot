@@ -1,0 +1,164 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1776038176471,
+  "projectRoot": "D:\\Veibcode Projects\\max-id-bot",
+  "techStack": {
+    "languages": [
+      {
+        "name": "Python",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "requirements.txt"
+        ]
+      }
+    ],
+    "frameworks": [],
+    "packageManager": "pip",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": null,
+    "lintCommand": null,
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [],
+    "gitBranches": null
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "deploy": {
+      "path": "deploy",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1776038176446,
+      "keyFiles": [
+        "maxidbot.service"
+      ]
+    },
+    "handlers": {
+      "path": "handlers",
+      "purpose": null,
+      "fileCount": 5,
+      "lastAccessed": 1776038176447,
+      "keyFiles": [
+        "bot_added.py",
+        "callbacks.py",
+        "messages.py",
+        "start.py",
+        "__init__.py"
+      ]
+    },
+    "keyboards": {
+      "path": "keyboards",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1776038176447,
+      "keyFiles": [
+        "main_menu.py",
+        "__init__.py"
+      ]
+    },
+    "__pycache__": {
+      "path": "__pycache__",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1776038176448,
+      "keyFiles": [
+        "config.cpython-312.pyc"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "CLAUDE.md",
+      "accessCount": 2,
+      "lastAccessed": 1776038891850,
+      "type": "file"
+    },
+    {
+      "path": "",
+      "accessCount": 1,
+      "lastAccessed": 1776038223544,
+      "type": "directory"
+    },
+    {
+      "path": "handlers\\messages.py",
+      "accessCount": 1,
+      "lastAccessed": 1776038237196,
+      "type": "file"
+    },
+    {
+      "path": "handlers\\start.py",
+      "accessCount": 1,
+      "lastAccessed": 1776038237229,
+      "type": "file"
+    },
+    {
+      "path": "handlers\\callbacks.py",
+      "accessCount": 1,
+      "lastAccessed": 1776038237351,
+      "type": "file"
+    },
+    {
+      "path": "handlers\\bot_added.py",
+      "accessCount": 1,
+      "lastAccessed": 1776038237452,
+      "type": "file"
+    },
+    {
+      "path": "config.py",
+      "accessCount": 1,
+      "lastAccessed": 1776038237487,
+      "type": "file"
+    },
+    {
+      "path": "requirements.txt",
+      "accessCount": 1,
+      "lastAccessed": 1776038237528,
+      "type": "file"
+    },
+    {
+      "path": "Dockerfile",
+      "accessCount": 1,
+      "lastAccessed": 1776038237550,
+      "type": "file"
+    },
+    {
+      "path": "README.md",
+      "accessCount": 1,
+      "lastAccessed": 1776038237565,
+      "type": "file"
+    },
+    {
+      "path": "bot.py",
+      "accessCount": 1,
+      "lastAccessed": 1776038237609,
+      "type": "file"
+    },
+    {
+      "path": "keyboards\\main_menu.py",
+      "accessCount": 1,
+      "lastAccessed": 1776038237970,
+      "type": "file"
+    },
+    {
+      "path": "deploy\\maxidbot.service",
+      "accessCount": 1,
+      "lastAccessed": 1776038237980,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}

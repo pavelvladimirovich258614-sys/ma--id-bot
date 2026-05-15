@@ -24,6 +24,15 @@ logger = logging.getLogger(__name__)
 # Загрузка токена из переменной окружения
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
+# Настройки проверки подписки на канал
+CHANNEL_ID = os.getenv("CHANNEL_ID", "id752703975446_biz")
+CHANNEL_LINK = os.getenv("CHANNEL_LINK", "https://max.ru/id752703975446_biz")
+SUBSCRIPTION_TEXT = os.getenv(
+    "SUBSCRIPTION_TEXT",
+    "Чтобы продолжить пользоваться ботом, подпишитесь на канал:"
+)
+API_BASE = os.getenv("API_BASE", "https://platform-api.max.ru")
+
 if not BOT_TOKEN:
     print("ERROR: BOT_TOKEN не найден в переменных окружения!")
     print("Создайте файл .env с переменной BOT_TOKEN=ваш_токен")

@@ -11,6 +11,7 @@ from maxapi.enums.parse_mode import ParseMode
 from maxapi.types import BotCommand
 
 from config import BOT_TOKEN
+from database.storage import init_db
 from handlers.start import register_start_handlers
 from handlers.callbacks import register_callback_handlers
 from handlers.messages import register_message_handler
@@ -36,6 +37,8 @@ async def main():
     bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
     _bot = bot
     dp = Dispatcher()
+
+    await init_db()
 
     # Регистрация обработчиков
     # 1) bot_started, /start, /help (command handlers)
