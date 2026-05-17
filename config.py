@@ -21,11 +21,28 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+
+def _parse_optional_int(value, name):
+    """Парсит необязательное целочисленное значение из окружения."""
+    if not value:
+        return None
+
+    try:
+        return int(value)
+    except ValueError:
+        logger.warning(f"{name} должен быть числом, получено: {value}")
+        return None
+
+
 # Загрузка токена из переменной окружения
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 # Настройки проверки подписки на канал
 CHANNEL_ID = os.getenv("CHANNEL_ID", "id752703975446_biz")
+CHANNEL_CHAT_ID = _parse_optional_int(
+    os.getenv("CHANNEL_CHAT_ID"),
+    "CHANNEL_CHAT_ID"
+)
 CHANNEL_LINK = os.getenv("CHANNEL_LINK", "https://max.ru/id752703975446_biz")
 SUBSCRIPTION_TEXT = os.getenv(
     "SUBSCRIPTION_TEXT",

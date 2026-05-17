@@ -16,6 +16,7 @@ from handlers.start import register_start_handlers
 from handlers.callbacks import register_callback_handlers
 from handlers.messages import register_message_handler
 from handlers.bot_added import register_bot_added_handler
+from handlers.subscription_events import register_subscription_event_handlers
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,8 @@ async def main():
     register_message_handler(dp)
     # 4) добавление бота в чат/канал (bot_added)
     register_bot_added_handler(dp)
+    # 5) подписка и отписка пользователей от обязательного канала
+    register_subscription_event_handlers(dp)
 
     # Установка команд бота
     try:

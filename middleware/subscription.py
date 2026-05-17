@@ -61,6 +61,20 @@ def require_subscription(handler_func: Callable[..., Awaitable[Any]]):
             await update_user(user_id, usage_count=usage_count + 1)
             return await handler_func(event, *args, **kwargs)
 
+        event_decision = _get_event_subscription_decision(user)
+        if event_decision is not None:
+            logger.info(
+                "Subscription decision: %s (source=%s)",
+                event_decision,
+                "event"
+            )
+            if event_decision:
+                return await handler_func(event, *args, **kwargs)
+
+            await _send_subscription_message(event)
+            await _answer_callback_if_needed(event)
+            return None
+
         cached_decision = _get_cached_subscription_decision(user)
         if cached_decision is not None:
             logger.info(
@@ -79,7 +93,8 @@ def require_subscription(handler_func: Callable[..., Awaitable[Any]]):
         await update_user(
             user_id,
             is_subscribed=1 if is_subscribed else 0,
-            last_check=datetime.utcnow().isoformat()
+            last_check=datetime.utcnow().isoformat(),
+            subscription_source="api"
         )
 
         if is_subscribed:
@@ -161,6 +176,9 @@ def _is_sticker_attachment(attachment: Any) -> bool:
 
 def _get_cached_subscription_decision(user: dict[str, Any]) -> bool | None:
     """Возвращает кэшированное решение или None, если кэш устарел."""
+    if user.get("subscription_source") == "event":
+        return None
+
     last_check = user.get("last_check")
     if not last_check:
         return None
@@ -181,6 +199,14 @@ def _get_cached_subscription_decision(user: dict[str, Any]) -> bool | None:
         return is_subscribed
 
     return None
+
+
+def _get_event_subscription_decision(user: dict[str, Any]) -> bool | None:
+    """Возвращает состояние подписки, полученное из событий канала."""
+    if user.get("subscription_source") != "event":
+        return None
+
+    return int(user.get("is_subscribed") or 0) == 1
 
 
 async def _check_subscription(user_id: int) -> bool:
