@@ -12,6 +12,7 @@ from maxapi.enums.parse_mode import ParseMode
 from config import (
     API_BASE,
     BOT_TOKEN,
+    CHANNEL_CHAT_ID,
     CHANNEL_ID,
     SUBSCRIPTION_TEXT,
 )
@@ -216,13 +217,18 @@ async def _check_subscription(user_id: int) -> bool:
     Ошибки прав доступа и неверного канала блокируют пользователя.
     Временные сетевые проблемы пропускают запрос.
     """
-    url = f"{API_BASE}/chats/{CHANNEL_ID}/members"
+    chat_id = CHANNEL_CHAT_ID if CHANNEL_CHAT_ID is not None else CHANNEL_ID
+    url = f"{API_BASE}/chats/{chat_id}/members"
     headers = {"Authorization": BOT_TOKEN}
     logger.info("Checking subscription: user_id=%s, url=%s", user_id, url)
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(url, headers=headers)
+            resp = await client.get(
+                url,
+                headers=headers,
+                params={"user_ids": user_id}
+            )
 
         logger.info("Members API status: %s", resp.status_code)
         logger.info("Members API body preview: %s", str(resp.text)[:500])
