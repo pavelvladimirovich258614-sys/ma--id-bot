@@ -63,18 +63,19 @@ def require_subscription(handler_func: Callable[..., Awaitable[Any]]):
             return await handler_func(event, *args, **kwargs)
 
         event_decision = _get_event_subscription_decision(user)
-        if event_decision is not None:
+        if event_decision is True:
             logger.info(
                 "Subscription decision: %s (source=%s)",
                 event_decision,
                 "event"
             )
-            if event_decision:
-                return await handler_func(event, *args, **kwargs)
+            return await handler_func(event, *args, **kwargs)
 
-            await _send_subscription_message(event)
-            await _answer_callback_if_needed(event)
-            return None
+        if event_decision is False:
+            logger.info(
+                "Subscription event says user is not subscribed; "
+                "verifying via API"
+            )
 
         cached_decision = _get_cached_subscription_decision(user)
         if cached_decision is not None:

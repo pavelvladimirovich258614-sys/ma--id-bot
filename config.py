@@ -40,7 +40,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 # Настройки проверки подписки на канал
 CHANNEL_ID = os.getenv("CHANNEL_ID", "id752703975446_biz")
 CHANNEL_CHAT_ID = _parse_optional_int(
-    os.getenv("CHANNEL_CHAT_ID"),
+    os.getenv("CHANNEL_CHAT_ID", "-72143469522347"),
     "CHANNEL_CHAT_ID"
 )
 CHANNEL_LINK = os.getenv("CHANNEL_LINK", "https://max.ru/id752703975446_biz")
