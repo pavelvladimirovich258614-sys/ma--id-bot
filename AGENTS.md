@@ -293,6 +293,14 @@ await event.bot.send_message(
 
 ---
 
+## Lesson Learned
+
+- MAX API для проверки участников канала требует внутренний числовой `chat_id`, например `-72143469522347`, а не публичный biz-ID вида `id752703975446_biz`.
+- Публичный `CHANNEL_ID` и `CHANNEL_LINK` нужны для пользовательской ссылки на канал, но endpoint `/chats/{chatId}/members` должен использовать `CHANNEL_CHAT_ID`.
+- Рабочая проверка подписки выполняется через `GET https://platform-api.max.ru/chats/{CHANNEL_CHAT_ID}/members?user_ids={user_id}` с raw-token в заголовке `Authorization`.
+
+---
+
 ## Inline Keyboard Layout
 
 Main menu structure (from `keyboards/main_menu.py`):
