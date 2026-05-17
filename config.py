@@ -29,7 +29,8 @@ CHANNEL_ID = os.getenv("CHANNEL_ID", "id752703975446_biz")
 CHANNEL_LINK = os.getenv("CHANNEL_LINK", "https://max.ru/id752703975446_biz")
 SUBSCRIPTION_TEXT = os.getenv(
     "SUBSCRIPTION_TEXT",
-    "Чтобы продолжить пользоваться ботом, подпишитесь на канал:"
+    "Чтобы продолжить пользоваться ботом, подпишитесь на канал. "
+    "После подписки нажмите /start"
 )
 API_BASE = os.getenv("API_BASE", "https://platform-api.max.ru")
 

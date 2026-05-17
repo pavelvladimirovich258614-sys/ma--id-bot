@@ -21,7 +21,8 @@ from keyboards.subscription import subscription_keyboard
 
 logger = logging.getLogger(__name__)
 
-CACHE_TTL_SECONDS = 300
+CACHE_TTL_SUBSCRIBED = 300
+CACHE_TTL_NOT_SUBSCRIBED = 60
 PROTECTED_CALLBACK_PAYLOADS = {
     "get_user_id",
     "get_bot_id",
@@ -50,18 +51,29 @@ def require_subscription(handler_func: Callable[..., Awaitable[Any]]):
 
         user = await get_user(user_id)
         usage_count = int(user.get("usage_count") or 0)
+        logger.info(
+            "Middleware entered: user_id=%s usage_count=%s",
+            user_id,
+            usage_count
+        )
 
         if usage_count < 1:
             await update_user(user_id, usage_count=usage_count + 1)
             return await handler_func(event, *args, **kwargs)
 
-        if _has_valid_subscription_cache(user):
+        cached_decision = _get_cached_subscription_decision(user)
+        if cached_decision is not None:
             logger.info(
                 "Subscription decision: %s (cached=%s)",
-                True,
+                cached_decision,
                 True
             )
-            return await handler_func(event, *args, **kwargs)
+            if cached_decision:
+                return await handler_func(event, *args, **kwargs)
+
+            await _send_subscription_message(event)
+            await _answer_callback_if_needed(event)
+            return None
 
         is_subscribed = await _check_subscription(user_id)
         await update_user(
@@ -147,22 +159,28 @@ def _is_sticker_attachment(attachment: Any) -> bool:
     )
 
 
-def _has_valid_subscription_cache(user: dict[str, Any]) -> bool:
-    """Проверяет актуальный положительный кэш подписки."""
-    if int(user.get("is_subscribed") or 0) != 1:
-        return False
-
+def _get_cached_subscription_decision(user: dict[str, Any]) -> bool | None:
+    """Возвращает кэшированное решение или None, если кэш устарел."""
     last_check = user.get("last_check")
     if not last_check:
-        return False
+        return None
 
     try:
         checked_at = datetime.fromisoformat(last_check)
     except ValueError:
-        return False
+        return None
 
+    is_subscribed = int(user.get("is_subscribed") or 0) == 1
+    ttl_seconds = (
+        CACHE_TTL_SUBSCRIBED
+        if is_subscribed
+        else CACHE_TTL_NOT_SUBSCRIBED
+    )
     age_seconds = (datetime.utcnow() - checked_at).total_seconds()
-    return age_seconds < CACHE_TTL_SECONDS
+    if age_seconds < ttl_seconds:
+        return is_subscribed
+
+    return None
 
 
 async def _check_subscription(user_id: int) -> bool:
@@ -173,7 +191,7 @@ async def _check_subscription(user_id: int) -> bool:
     Временные сетевые проблемы пропускают запрос.
     """
     url = f"{API_BASE}/chats/{CHANNEL_ID}/members"
-    headers = {"Authorization": f"Bearer {BOT_TOKEN}"}
+    headers = {"Authorization": BOT_TOKEN}
     logger.info("Checking subscription: user_id=%s, url=%s", user_id, url)
 
     try:
