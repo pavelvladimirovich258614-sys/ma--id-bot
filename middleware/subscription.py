@@ -56,6 +56,11 @@ def require_subscription(handler_func: Callable[..., Awaitable[Any]]):
             return await handler_func(event, *args, **kwargs)
 
         if _has_valid_subscription_cache(user):
+            logger.info(
+                "Subscription decision: %s (cached=%s)",
+                True,
+                True
+            )
             return await handler_func(event, *args, **kwargs)
 
         is_subscribed = await _check_subscription(user_id)
@@ -164,32 +169,87 @@ async def _check_subscription(user_id: int) -> bool:
     """
     Проверяет подписку через MAX API.
 
-    При любой ошибке API возвращает True, чтобы не блокировать пользователя
-    из-за сетевой проблемы.
+    Ошибки прав доступа и неверного канала блокируют пользователя.
+    Временные сетевые проблемы пропускают запрос.
     """
     url = f"{API_BASE}/chats/{CHANNEL_ID}/members"
     headers = {"Authorization": f"Bearer {BOT_TOKEN}"}
+    logger.info("Checking subscription: user_id=%s, url=%s", user_id, url)
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.get(url, headers=headers)
+            resp = await client.get(url, headers=headers)
 
-        if response.status_code != 200:
-            logger.warning(
-                "Проверка подписки недоступна: "
-                f"status={response.status_code}"
+        logger.info("Members API status: %s", resp.status_code)
+        logger.info("Members API body preview: %s", str(resp.text)[:500])
+
+        if resp.status_code == 200:
+            data = resp.json()
+            decision = _members_include_user(data, user_id)
+            logger.info(
+                "Subscription decision: %s (cached=%s)",
+                decision,
+                False
+            )
+            return decision
+
+        if resp.status_code in (403, 404):
+            logger.error(
+                "Subscription API error: %s. Bot may not be admin in channel "
+                "or channel ID is wrong.",
+                resp.status_code
+            )
+            logger.info(
+                "Subscription decision: %s (cached=%s)",
+                False,
+                False
+            )
+            return False
+
+        if resp.status_code == 429:
+            logger.warning("Rate limit")
+            logger.info(
+                "Subscription decision: %s (cached=%s)",
+                True,
+                False
             )
             return True
 
-        data = response.json()
-    except Exception as api_err:
-        logger.warning(
-            f"Ошибка API проверки подписки, доступ разрешен: {api_err}",
-            exc_info=True
+        if 500 <= resp.status_code <= 599:
+            logger.warning("API unreachable")
+            logger.info(
+                "Subscription decision: %s (cached=%s)",
+                True,
+                False
+            )
+            return True
+
+        logger.error("Subscription API unexpected status: %s", resp.status_code)
+        logger.info(
+            "Subscription decision: %s (cached=%s)",
+            False,
+            False
+        )
+        return False
+    except httpx.TimeoutException:
+        logger.warning("API unreachable")
+        logger.info(
+            "Subscription decision: %s (cached=%s)",
+            True,
+            False
         )
         return True
-
-    return _members_include_user(data, user_id)
+    except Exception:
+        logger.exception("Subscription check failed")
+        logger.warning(
+            "API unreachable"
+        )
+        logger.info(
+            "Subscription decision: %s (cached=%s)",
+            True,
+            False
+        )
+        return True
 
 
 def _members_include_user(data: Any, user_id: int) -> bool:
