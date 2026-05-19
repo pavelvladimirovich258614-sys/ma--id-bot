@@ -86,13 +86,15 @@ def _send_message_to_max(
     if not token:
         raise RuntimeError("BOT_TOKEN не настроен")
 
-    payload = {"chat_id": user_id, "text": text}
+    params = {"user_id": user_id}
+    payload = {"text": text}
     if media_type and media_file_id:
         payload["attachments"] = [_media_attachment(media_type, media_file_id)]
 
     response = httpx.post(
         _max_api_url("/messages"),
         headers={"Authorization": token},
+        params=params,
         json=payload,
         timeout=15.0,
     )

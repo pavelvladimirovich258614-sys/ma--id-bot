@@ -300,6 +300,11 @@ button {
     color: #ffffff;
 }
 
+button:disabled {
+    cursor: not-allowed;
+    opacity: 0.66;
+}
+
 .secondary-button {
     text-align: center;
 }
@@ -407,6 +412,14 @@ button {
     padding: 14px;
 }
 
+.error-card {
+    border-color: rgba(185, 28, 28, 0.42);
+}
+
+.error-card strong {
+    color: var(--danger);
+}
+
 .progress-track {
     height: 14px;
     overflow: hidden;
@@ -418,6 +431,18 @@ button {
     height: 100%;
     border-radius: inherit;
     background: linear-gradient(90deg, var(--accent), var(--accent-2));
+}
+
+.submit-busy {
+    display: none;
+}
+
+.broadcast-form.htmx-request .submit-idle {
+    display: none;
+}
+
+.broadcast-form.htmx-request .submit-busy {
+    display: inline;
 }
 
 .logs {

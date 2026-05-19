@@ -354,67 +354,122 @@ async def broadcast_page(request: Request):
     )
 
 
+def _broadcast_error_response(
+    request: Request,
+    message: str,
+    status_code: int = status.HTTP_503_SERVICE_UNAVAILABLE,
+) -> HTMLResponse | JSONResponse:
+    """Возвращает ошибку запуска рассылки в формате текущего запроса."""
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse(
+            request=request,
+            name="admin/partials/broadcast_error.html",
+            status_code=status_code,
+            context={
+                "request": request,
+                "error_message": message,
+            },
+        )
+    return JSONResponse(status_code=status_code, content={"detail": message})
+
+
+def _mark_broadcast_failed(
+    session: Session,
+    broadcast_id: int | None,
+    error: Exception,
+) -> None:
+    """Фиксирует сбой запуска рассылки без падения UI."""
+    try:
+        if broadcast_id is not None:
+            broadcast = session.get(Broadcast, broadcast_id)
+            if broadcast is not None:
+                broadcast.status = "failed"
+
+        session.add(
+            EventLog(
+                event_type="broadcast_enqueue_failed",
+                details=f"{type(error).__name__}: {error}"[:2000],
+            )
+        )
+        session.commit()
+    except Exception:
+        session.rollback()
+
+
 @app.post("/broadcast/send", response_model=None)
 async def send_broadcast(
     request: Request,
     session: Session = Depends(get_session),
 ) -> dict[str, int | str] | HTMLResponse:
     """Создает рассылку и ставит доставку в Celery-очередь."""
-    if request.headers.get("content-type", "").startswith(
-        "application/json"
-    ):
-        body = await request.json()
-        payload = BroadcastSendRequest(**body)
-    else:
-        form = await request.form()
-        media_type = str(form.get("media_type") or "").strip() or None
-        media_file_id = str(form.get("media_file_id") or "").strip() or None
-        media_upload = form.get("media_upload")
-        if hasattr(media_upload, "filename") and media_upload.filename:
-            content = await media_upload.read()
-            media_file_id = upload_media_to_max(
-                filename=media_upload.filename,
-                content=content,
-                content_type=media_upload.content_type,
+    broadcast_id = None
+    try:
+        if request.headers.get("content-type", "").startswith(
+            "application/json"
+        ):
+            body = await request.json()
+            payload = BroadcastSendRequest(**body)
+        else:
+            form = await request.form()
+            media_type = str(form.get("media_type") or "").strip() or None
+            media_file_id = str(form.get("media_file_id") or "").strip() or None
+            media_upload = form.get("media_upload")
+            if hasattr(media_upload, "filename") and media_upload.filename:
+                content = await media_upload.read()
+                media_file_id = upload_media_to_max(
+                    filename=media_upload.filename,
+                    content=content,
+                    content_type=media_upload.content_type,
+                )
+                if (
+                    media_upload.content_type
+                    and media_upload.content_type.startswith("video/")
+                ):
+                    media_type = "video"
+                else:
+                    media_type = "image"
+            payload = BroadcastSendRequest(
+                text=str(form.get("text", "")),
+                media_type=media_type,
+                media_file_id=media_file_id,
             )
-            if media_upload.content_type and media_upload.content_type.startswith("video/"):
-                media_type = "video"
-            else:
-                media_type = "image"
-        payload = BroadcastSendRequest(
-            text=str(form.get("text", "")),
-            media_type=media_type,
-            media_file_id=media_file_id,
-        )
 
-    user_ids = [
-        row[0]
-        for row in (
-            session.query(User.user_id)
-            .filter(User.is_banned.is_(False))
-            .order_by(User.user_id)
-            .all()
-        )
-    ]
-    broadcast = Broadcast(
-        text=payload.text,
-        media_type=payload.media_type,
-        media_file_id=payload.media_file_id,
-        status="running" if user_ids else "completed",
-        total_count=len(user_ids),
-        sent_count=0,
-    )
-    session.add(broadcast)
-    session.commit()
-    session.refresh(broadcast)
-
-    if user_ids:
-        enqueue_broadcast(
-            broadcast_id=broadcast.id,
-            user_ids=user_ids,
+        user_ids = [
+            row[0]
+            for row in (
+                session.query(User.user_id)
+                .filter(User.is_banned.is_(False))
+                .order_by(User.user_id)
+                .all()
+            )
+        ]
+        broadcast = Broadcast(
             text=payload.text,
             media_type=payload.media_type,
             media_file_id=payload.media_file_id,
+            status="running" if user_ids else "completed",
+            total_count=len(user_ids),
+            sent_count=0,
+        )
+        session.add(broadcast)
+        session.commit()
+        session.refresh(broadcast)
+        broadcast_id = broadcast.id
+
+        if user_ids:
+            enqueue_broadcast(
+                broadcast_id=broadcast.id,
+                user_ids=user_ids,
+                text=payload.text,
+                media_type=payload.media_type,
+                media_file_id=payload.media_file_id,
+            )
+    except Exception as error:
+        session.rollback()
+        _mark_broadcast_failed(session, broadcast_id, error)
+        return _broadcast_error_response(
+            request=request,
+            message=f"Не удалось запустить рассылку: {type(error).__name__}: {error}",
         )
 
     response_payload = {

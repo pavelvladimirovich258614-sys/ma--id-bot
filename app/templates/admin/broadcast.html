@@ -13,7 +13,8 @@
           hx-post="/broadcast/send"
           enctype="multipart/form-data"
           hx-target="#broadcast-progress"
-          hx-swap="innerHTML">
+          hx-swap="innerHTML"
+          hx-disabled-elt="find button[type='submit']">
         <label for="text">Текст сообщения</label>
         <textarea id="text" name="text" rows="7" maxlength="4000" required placeholder="Введите текст рассылки"></textarea>
 
@@ -37,7 +38,10 @@
             <input name="media_upload" type="file" accept="image/*,video/*">
         </label>
 
-        <button type="submit">Запустить рассылку</button>
+        <button type="submit">
+            <span class="submit-idle">Запустить рассылку</span>
+            <span class="submit-busy">Запускаем...</span>
+        </button>
     </form>
     <div id="broadcast-progress" class="progress-host">
         <p class="muted">Прогресс появится после запуска.</p>
