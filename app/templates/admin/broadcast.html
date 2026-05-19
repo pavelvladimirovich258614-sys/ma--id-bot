@@ -1,0 +1,24 @@
+{% extends "admin/base.html" %}
+
+{% block content %}
+<header class="page-header">
+    <div>
+        <h1>Broadcast</h1>
+        <p>Массовая рассылка через Celery и Redis.</p>
+    </div>
+</header>
+
+<section class="panel">
+    <form class="broadcast-form"
+          hx-post="/broadcast/send"
+          hx-target="#broadcast-progress"
+          hx-swap="innerHTML">
+        <label for="text">Текст сообщения</label>
+        <textarea id="text" name="text" rows="8" maxlength="4000" required></textarea>
+        <button type="submit">Запустить рассылку</button>
+    </form>
+    <div id="broadcast-progress" class="progress-host">
+        <p class="muted">Прогресс появится после запуска.</p>
+    </div>
+</section>
+{% endblock %}

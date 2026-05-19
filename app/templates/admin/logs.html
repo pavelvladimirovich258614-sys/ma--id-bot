@@ -1,0 +1,22 @@
+{% extends "admin/base.html" %}
+
+{% block content %}
+<header class="page-header">
+    <div>
+        <h1>Logs</h1>
+        <p>Последние 100 строк сервиса max-id-bot.</p>
+    </div>
+    <button
+        hx-get="/logs/fragment"
+        hx-target="#logs-output"
+        hx-swap="innerHTML">
+        Обновить
+    </button>
+</header>
+
+<section class="panel">
+    <div id="logs-output">
+        {% include "admin/partials/logs_output.html" %}
+    </div>
+</section>
+{% endblock %}

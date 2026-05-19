@@ -1,0 +1,39 @@
+{% extends "admin/base.html" %}
+
+{% block content %}
+<header class="page-header">
+    <div>
+        <h1>Dashboard</h1>
+        <p>Сводка состояния бота и активности аудитории.</p>
+    </div>
+</header>
+
+<section class="metric-grid">
+    <article class="metric-card">
+        <span>Всего юзеров</span>
+        <strong>{{ total_users }}</strong>
+    </article>
+    <article class="metric-card">
+        <span>Подписано на канал</span>
+        <strong>{{ subscribed_users }}</strong>
+    </article>
+    <article class="metric-card warning">
+        <span>Ошибки API за сутки</span>
+        <strong>{{ api_errors_24h }}</strong>
+    </article>
+</section>
+
+<section class="panel">
+    <div class="panel-header">
+        <h2>Активность по дням</h2>
+    </div>
+    <div class="bar-chart" aria-label="График активности">
+        {% for item in activity %}
+            <div class="bar-item" title="{{ item.date }}: {{ item.count }}">
+                <div class="bar-value" style="height: {{ item.height }}%"></div>
+                <span>{{ item.date[5:] }}</span>
+            </div>
+        {% endfor %}
+    </div>
+</section>
+{% endblock %}

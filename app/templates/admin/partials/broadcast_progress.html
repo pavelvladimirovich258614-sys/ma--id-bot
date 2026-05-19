@@ -1,0 +1,17 @@
+<div
+    class="progress-card"
+    {% if broadcast.status == "running" %}
+    hx-get="/broadcast/{{ broadcast.id }}/status"
+    hx-trigger="every 2s"
+    hx-target="this"
+    hx-swap="outerHTML"
+    {% endif %}>
+    <div class="progress-meta">
+        <strong>Рассылка #{{ broadcast.id }}</strong>
+        <span>{{ broadcast.sent_count }} из {{ broadcast.total_count }}</span>
+    </div>
+    <div class="progress-track" role="progressbar" aria-valuenow="{{ progress_percent }}" aria-valuemin="0" aria-valuemax="100">
+        <div class="progress-fill" style="width: {{ progress_percent }}%"></div>
+    </div>
+    <p class="muted">Статус: {{ broadcast.status }} · {{ progress_percent }}%</p>
+</div>

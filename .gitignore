@@ -5,3 +5,4 @@ venv/
 *.tar.gz
 .venv/
 .git/
+admin_dashboard_dev.sqlite3*
