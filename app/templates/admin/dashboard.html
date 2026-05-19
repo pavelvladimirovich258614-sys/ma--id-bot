@@ -3,14 +3,17 @@
 {% block content %}
 <header class="page-header">
     <div>
-        <h1>Dashboard</h1>
-        <p>Сводка состояния бота и активности аудитории.</p>
+        <h1>Обзор</h1>
+        <p>Состояние аудитории, подписок и служебных ошибок.</p>
     </div>
+    <form hx-post="/stats/sync" hx-swap="none">
+        <button type="submit" class="secondary-button">Синхронизировать</button>
+    </form>
 </header>
 
 <section class="metric-grid">
     <article class="metric-card">
-        <span>Всего юзеров</span>
+        <span>Всего пользователей</span>
         <strong>{{ total_users }}</strong>
     </article>
     <article class="metric-card">
@@ -23,9 +26,39 @@
     </article>
 </section>
 
+{% if sync_report %}
+<section class="sync-note">
+    <strong>Статистика обновлена:</strong>
+    было {{ sync_report.known_before }},
+    реально {{ sync_report.real_members }},
+    после синхронизации {{ sync_report.known_after }}.
+</section>
+{% endif %}
+
+<section class="charts-grid">
+    <article class="panel">
+        <div class="panel-header">
+            <h2>Рост базы за 14 дней</h2>
+        </div>
+        <canvas id="growthChart" height="160"></canvas>
+    </article>
+    <article class="panel">
+        <div class="panel-header">
+            <h2>Воронка подписки</h2>
+        </div>
+        <canvas id="conversionChart" height="160"></canvas>
+    </article>
+    <article class="panel wide-panel">
+        <div class="panel-header">
+            <h2>Популярность функций</h2>
+        </div>
+        <canvas id="featureChart" height="120"></canvas>
+    </article>
+</section>
+
 <section class="panel">
     <div class="panel-header">
-        <h2>Активность по дням</h2>
+        <h2>Активность событий по дням</h2>
     </div>
     <div class="bar-chart" aria-label="График активности">
         {% for item in activity %}
@@ -36,4 +69,71 @@
         {% endfor %}
     </div>
 </section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const chartColors = {
+        blue: "#3b82f6",
+        green: "#10b981",
+        orange: "#f59e0b",
+        pink: "#ec4899",
+        text: getComputedStyle(document.documentElement).getPropertyValue("--text").trim(),
+        grid: getComputedStyle(document.documentElement).getPropertyValue("--line").trim(),
+    };
+
+    const baseChartOptions = {
+        responsive: true,
+        plugins: { legend: { labels: { color: chartColors.text } } },
+        scales: {
+            x: { ticks: { color: chartColors.text }, grid: { color: chartColors.grid } },
+            y: { ticks: { color: chartColors.text }, grid: { color: chartColors.grid }, beginAtZero: true },
+        },
+    };
+
+    new Chart(document.getElementById("growthChart"), {
+        type: "line",
+        data: {
+            labels: {{ growth_chart["labels"] | tojson }},
+            datasets: [{
+                label: "Новые пользователи",
+                data: {{ growth_chart["values"] | tojson }},
+                borderColor: chartColors.blue,
+                backgroundColor: "rgba(59, 130, 246, 0.18)",
+                fill: true,
+                tension: 0.35,
+            }],
+        },
+        options: baseChartOptions,
+    });
+
+    new Chart(document.getElementById("conversionChart"), {
+        type: "doughnut",
+        data: {
+            labels: {{ conversion_chart["labels"] | tojson }},
+            datasets: [{
+                data: {{ conversion_chart["values"] | tojson }},
+                backgroundColor: [chartColors.blue, chartColors.green],
+                borderWidth: 0,
+            }],
+        },
+        options: {
+            responsive: true,
+            plugins: { legend: { position: "bottom", labels: { color: chartColors.text } } },
+        },
+    });
+
+    new Chart(document.getElementById("featureChart"), {
+        type: "bar",
+        data: {
+            labels: {{ feature_chart["labels"] | tojson }},
+            datasets: [{
+                label: "События",
+                data: {{ feature_chart["values"] | tojson }},
+                backgroundColor: [chartColors.blue, chartColors.green, chartColors.orange, chartColors.pink],
+            }],
+        },
+        options: baseChartOptions,
+    });
+</script>
 {% endblock %}

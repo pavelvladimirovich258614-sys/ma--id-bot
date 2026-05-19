@@ -3,8 +3,8 @@
 {% block content %}
 <header class="page-header">
     <div>
-        <h1>Users</h1>
-        <p>Поиск, статусы и быстрые действия по пользователям.</p>
+        <h1>Пользователи</h1>
+        <p>Поиск, подписка, блокировки и быстрые действия.</p>
     </div>
 </header>
 
@@ -21,6 +21,7 @@
             inputmode="numeric"
             autocomplete="off">
         <button type="submit">Найти</button>
+        <a class="secondary-button" href="/users">Сбросить</a>
     </form>
     <div id="users-table">
         {% include "admin/partials/users_table.html" %}

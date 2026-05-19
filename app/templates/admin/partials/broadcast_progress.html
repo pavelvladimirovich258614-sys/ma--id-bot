@@ -13,5 +13,11 @@
     <div class="progress-track" role="progressbar" aria-valuenow="{{ progress_percent }}" aria-valuemin="0" aria-valuemax="100">
         <div class="progress-fill" style="width: {{ progress_percent }}%"></div>
     </div>
-    <p class="muted">Статус: {{ broadcast.status }} · {{ progress_percent }}%</p>
+    <p class="muted">
+        Статус: {{ "выполняется" if broadcast.status == "running" else "завершена" }}
+        · {{ progress_percent }}%
+        {% if broadcast.media_type %}
+            · медиа: {{ broadcast.media_type }}
+        {% endif %}
+    </p>
 </div>

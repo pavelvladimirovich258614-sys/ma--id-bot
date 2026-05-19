@@ -1,51 +1,42 @@
-<div class="table-wrap">
-    <table>
-        <thead>
-            <tr>
-                <th>user_id</th>
-                <th>username</th>
-                <th>подписка</th>
-                <th>бан</th>
-                <th>активность</th>
-                <th>действия</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for user in users %}
-                <tr>
-                    <td><code>{{ user.user_id }}</code></td>
-                    <td>{{ user.username or "—" }}</td>
-                    <td>
-                        <span class="badge {{ 'ok' if user.is_subscribed else 'muted-badge' }}">
-                            {{ "да" if user.is_subscribed else "нет" }}
-                        </span>
-                    </td>
-                    <td>
-                        <span class="badge {{ 'danger' if user.is_banned else 'ok' }}">
-                            {{ "ban" if user.is_banned else "active" }}
-                        </span>
-                    </td>
-                    <td>{{ user.last_activity or "—" }}</td>
-                    <td class="actions">
-                        <button
-                            hx-post="/users/{{ user.user_id }}/toggle-ban"
-                            hx-target="#users-table"
-                            hx-swap="innerHTML">
-                            {{ "Разбан" if user.is_banned else "Бан" }}
-                        </button>
-                        <button
-                            hx-post="/users/{{ user.user_id }}/reset-subscription"
-                            hx-target="#users-table"
-                            hx-swap="innerHTML">
-                            Сбросить статус подписки
-                        </button>
-                    </td>
-                </tr>
-            {% else %}
-                <tr>
-                    <td colspan="6" class="empty">Пользователи не найдены.</td>
-                </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+<div class="user-card-grid">
+    {% for user in users %}
+        <article class="user-card {{ 'blocked' if user.is_banned else '' }}">
+            <div class="user-card-head">
+                <div>
+                    <span class="eyebrow">MAX user_id</span>
+                    <strong>{{ user.user_id }}</strong>
+                </div>
+                <span class="status-dot {{ 'danger-dot' if user.is_banned else 'ok-dot' }}"></span>
+            </div>
+            <div class="user-meta">
+                <span>{{ user.username or "Имя не указано" }}</span>
+                <span>Активность: {{ user.last_activity.strftime("%d.%m.%Y %H:%M") if user.last_activity else "нет данных" }}</span>
+            </div>
+            <div class="badge-row">
+                <span class="badge {{ 'ok' if user.is_subscribed else 'muted-badge' }}">
+                    {{ "Подписан" if user.is_subscribed else "Не подписан" }}
+                </span>
+                <span class="badge {{ 'danger' if user.is_banned else 'ok' }}">
+                    {{ "Заблокирован" if user.is_banned else "Активен" }}
+                </span>
+            </div>
+            <div class="actions">
+                <button
+                    hx-post="/users/{{ user.user_id }}/toggle-ban"
+                    hx-target="#users-table"
+                    hx-swap="innerHTML">
+                    {{ "Разблокировать" if user.is_banned else "Заблокировать" }}
+                </button>
+                <button
+                    class="secondary-button"
+                    hx-post="/users/{{ user.user_id }}/reset-subscription"
+                    hx-target="#users-table"
+                    hx-swap="innerHTML">
+                    Сбросить подписку
+                </button>
+            </div>
+        </article>
+    {% else %}
+        <div class="empty-state">Пользователи не найдены.</div>
+    {% endfor %}
 </div>

@@ -36,16 +36,64 @@ def _max_api_url(path: str) -> str:
     return f"{api_base}{path}"
 
 
-def _send_message_to_max(user_id: int, text: str) -> None:
-    """Отправляет сообщение пользователю через единый MAX API adapter."""
+def _media_attachment(media_type: str, media_file_id: str) -> dict:
+    """Формирует вложение MAX для ранее загруженного медиа."""
+    return {
+        "type": media_type,
+        "payload": {
+            "file_id": media_file_id,
+        },
+    }
+
+
+def upload_media_to_max(
+    filename: str,
+    content: bytes,
+    content_type: str | None,
+) -> str:
+    """Загружает медиа в MAX API и возвращает file_id."""
     token = os.getenv("BOT_TOKEN")
     if not token:
         raise RuntimeError("BOT_TOKEN не настроен")
 
     response = httpx.post(
+        _max_api_url("/uploads"),
+        headers={"Authorization": token},
+        files={"file": (filename, content, content_type or "application/octet-stream")},
+        timeout=60.0,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    file_id = (
+        payload.get("file_id")
+        or payload.get("id")
+        or payload.get("fileId")
+        or payload.get("token")
+    )
+    if not file_id:
+        raise RuntimeError("MAX API не вернул file_id после загрузки медиа")
+    return str(file_id)
+
+
+def _send_message_to_max(
+    user_id: int,
+    text: str,
+    media_type: str | None = None,
+    media_file_id: str | None = None,
+) -> None:
+    """Отправляет сообщение пользователю через единый MAX API adapter."""
+    token = os.getenv("BOT_TOKEN")
+    if not token:
+        raise RuntimeError("BOT_TOKEN не настроен")
+
+    payload = {"chat_id": user_id, "text": text}
+    if media_type and media_file_id:
+        payload["attachments"] = [_media_attachment(media_type, media_file_id)]
+
+    response = httpx.post(
         _max_api_url("/messages"),
         headers={"Authorization": token},
-        json={"chat_id": user_id, "text": text},
+        json=payload,
         timeout=15.0,
     )
     response.raise_for_status()
@@ -98,12 +146,19 @@ def send_broadcast_task(
     user_id: int,
     text: str,
     broadcast_id: int | None = None,
+    media_type: str | None = None,
+    media_file_id: str | None = None,
 ) -> dict[str, int | bool | str | None]:
     """Отправляет одно сообщение рассылки пользователю MAX."""
     time.sleep(random.uniform(0.05, 0.1))
 
     try:
-        _send_message_to_max(user_id=user_id, text=text)
+        _send_message_to_max(
+            user_id=user_id,
+            text=text,
+            media_type=media_type,
+            media_file_id=media_file_id,
+        )
     except Exception as error:
         _log_delivery_error(
             user_id=user_id,
@@ -151,13 +206,21 @@ def finalize_broadcast_task(
     }
 
 
-def enqueue_broadcast(broadcast_id: int, user_ids: Iterable[int], text: str) -> str:
+def enqueue_broadcast(
+    broadcast_id: int,
+    user_ids: Iterable[int],
+    text: str,
+    media_type: str | None = None,
+    media_file_id: str | None = None,
+) -> str:
     """Ставит рассылку в Redis-backed Celery очередь и сразу возвращает task id."""
     delivery_tasks = group(
         send_broadcast_task.s(
             user_id=int(user_id),
             text=text,
             broadcast_id=broadcast_id,
+            media_type=media_type,
+            media_file_id=media_file_id,
         )
         for user_id in user_ids
     )

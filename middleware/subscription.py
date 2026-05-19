@@ -16,6 +16,7 @@ from config import (
     CHANNEL_ID,
     SUBSCRIPTION_TEXT,
 )
+from database.postgres_storage import get_admin_user_state, upsert_admin_user
 from database.storage import get_user, update_user
 from keyboards.subscription import subscription_keyboard
 
@@ -50,8 +51,19 @@ def require_subscription(handler_func: Callable[..., Awaitable[Any]]):
             logger.warning("Не удалось определить пользователя для проверки подписки")
             return await handler_func(event, *args, **kwargs)
 
+        admin_user = await get_admin_user_state(user_id)
+        if admin_user and bool(admin_user.get("is_banned")):
+            logger.warning("Пользователь заблокирован в админ-панели: %s", user_id)
+            await _send_banned_message(event)
+            await _answer_callback_if_needed(
+                event,
+                notification="Доступ заблокирован"
+            )
+            return None
+
         user = await get_user(user_id)
         usage_count = int(user.get("usage_count") or 0)
+        await upsert_admin_user(user_id)
         logger.info(
             "Middleware entered: user_id=%s usage_count=%s",
             user_id,
@@ -98,6 +110,7 @@ def require_subscription(handler_func: Callable[..., Awaitable[Any]]):
             last_check=datetime.utcnow().isoformat(),
             subscription_source="api"
         )
+        await upsert_admin_user(user_id, is_subscribed=is_subscribed)
 
         if is_subscribed:
             return await handler_func(event, *args, **kwargs)
@@ -392,7 +405,28 @@ async def _send_subscription_message(event: Any) -> None:
     )
 
 
-async def _answer_callback_if_needed(event: Any) -> None:
+async def _send_banned_message(event: Any) -> None:
+    """Сообщает пользователю, что доступ заблокирован владельцем."""
+    text = "Доступ к боту заблокирован администратором."
+    message = getattr(event, "message", None)
+
+    if message is not None and hasattr(message, "answer"):
+        await message.answer(text=text)
+        return
+
+    chat_id = _extract_chat_id(event)
+    bot = getattr(event, "bot", None)
+    if chat_id is None or bot is None:
+        logger.warning("Не удалось отправить сообщение о блокировке")
+        return
+
+    await bot.send_message(chat_id=chat_id, text=text)
+
+
+async def _answer_callback_if_needed(
+    event: Any,
+    notification: str = "Подпишитесь на канал",
+) -> None:
     """Отвечает на callback, чтобы кнопка не оставалась в ожидании."""
     callback = getattr(event, "callback", None)
     callback_id = getattr(callback, "callback_id", None)
@@ -403,7 +437,7 @@ async def _answer_callback_if_needed(event: Any) -> None:
     try:
         await bot.send_callback(
             callback_id=callback_id,
-            notification="Подпишитесь на канал"
+            notification=notification
         )
     except Exception as callback_err:
         logger.warning(f"Не удалось ответить на callback: {callback_err}")

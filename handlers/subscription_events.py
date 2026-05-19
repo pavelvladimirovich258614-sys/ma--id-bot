@@ -8,6 +8,7 @@ from typing import Any
 from maxapi.types import UserAdded, UserRemoved
 
 from config import CHANNEL_CHAT_ID
+from database.postgres_storage import upsert_admin_user
 from database.storage import update_user
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ def register_subscription_event_handlers(dp):
             last_check=datetime.utcnow().isoformat(),
             subscription_source="event"
         )
+        await upsert_admin_user(user_id, is_subscribed=True)
         logger.info(
             "Subscription event: user_added user_id=%s chat_id=%s",
             user_id,
@@ -61,6 +63,7 @@ def register_subscription_event_handlers(dp):
             last_check=datetime.utcnow().isoformat(),
             subscription_source="event"
         )
+        await upsert_admin_user(user_id, is_subscribed=False)
         logger.info(
             "Subscription event: user_removed user_id=%s chat_id=%s",
             user_id,

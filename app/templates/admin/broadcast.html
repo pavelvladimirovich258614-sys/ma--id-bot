@@ -3,18 +3,40 @@
 {% block content %}
 <header class="page-header">
     <div>
-        <h1>Broadcast</h1>
-        <p>Массовая рассылка через Celery и Redis.</p>
+        <h1>Рассылки</h1>
+        <p>Фоновые отправки через Celery и Redis с лимитом MAX 30 rps.</p>
     </div>
 </header>
 
 <section class="panel">
     <form class="broadcast-form"
           hx-post="/broadcast/send"
+          enctype="multipart/form-data"
           hx-target="#broadcast-progress"
           hx-swap="innerHTML">
         <label for="text">Текст сообщения</label>
-        <textarea id="text" name="text" rows="8" maxlength="4000" required></textarea>
+        <textarea id="text" name="text" rows="7" maxlength="4000" required placeholder="Введите текст рассылки"></textarea>
+
+        <div class="form-grid">
+            <label>
+                Тип медиа
+                <select name="media_type">
+                    <option value="">Без медиа</option>
+                    <option value="image">Изображение</option>
+                    <option value="video">Короткое видео</option>
+                </select>
+            </label>
+            <label>
+                file_id из MAX
+                <input name="media_file_id" type="text" placeholder="Оставьте пустым при загрузке файла">
+            </label>
+        </div>
+
+        <label>
+            Загрузить изображение или видео
+            <input name="media_upload" type="file" accept="image/*,video/*">
+        </label>
+
         <button type="submit">Запустить рассылку</button>
     </form>
     <div id="broadcast-progress" class="progress-host">

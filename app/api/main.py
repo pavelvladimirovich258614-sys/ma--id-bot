@@ -14,7 +14,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.models.database import get_session, init_models
 from app.models.tables import Broadcast, EventLog, User
-from app.tasks.broadcast import enqueue_broadcast
+from app.services.subscription_sync import ensure_recent_subscription_sync, sync_subscriptions
+from app.tasks.broadcast import enqueue_broadcast, upload_media_to_max
 
 
 OWNER_HEADER = "X-Owner-Id"
@@ -26,6 +27,8 @@ class BroadcastSendRequest(BaseModel):
     """Запрос на запуск массовой рассылки."""
 
     text: str = Field(min_length=1, max_length=4000)
+    media_type: str | None = None
+    media_file_id: str | None = None
 
 
 class OwnerOnlyMiddleware(BaseHTTPMiddleware):
@@ -76,6 +79,7 @@ def on_startup() -> None:
 @app.get("/stats")
 async def get_stats(session: Session = Depends(get_session)) -> dict[str, int | float]:
     """Возвращает базовую статистику пользователей."""
+    _try_sync_subscriptions(session)
     total_users = session.query(func.count(User.user_id)).scalar() or 0
     subscribed_users = (
         session.query(func.count(User.user_id))
@@ -98,13 +102,28 @@ async def get_stats(session: Session = Depends(get_session)) -> dict[str, int | 
 
     return {
         "total_users": total_users,
+        "subscribed_users": subscribed_users,
         "subscribed_percent": subscribed_percent,
         "active_24h": active_24h,
     }
 
 
+@app.post("/stats/sync")
+async def sync_stats(session: Session = Depends(get_session)) -> dict[str, int]:
+    """Принудительно синхронизирует подписчиков канала с PostgreSQL."""
+    report = sync_subscriptions(session)
+    return {
+        "known_before": report.known_before,
+        "real_members": report.real_members,
+        "updated_rows": report.updated_rows,
+        "inserted_rows": report.inserted_rows,
+        "known_after": report.known_after,
+    }
+
+
 def _dashboard_context(request: Request, session: Session) -> dict:
     """Собирает данные главной страницы админ-панели."""
+    sync_report = _try_sync_subscriptions(session)
     total_users = session.query(func.count(User.user_id)).scalar() or 0
     subscribed_users = (
         session.query(func.count(User.user_id))
@@ -145,13 +164,22 @@ def _dashboard_context(request: Request, session: Session) -> dict:
                 activity.get(row[0].date().isoformat(), 0) + 1
             )
     max_activity = max(activity.values()) if activity else 0
+    growth_chart = _build_growth_chart(session, since_14d)
+    feature_chart = _build_feature_chart(session)
 
     return {
         "request": request,
-        "title": "Dashboard",
+        "title": "Панель управления",
         "total_users": total_users,
         "subscribed_users": subscribed_users,
         "api_errors_24h": api_errors_24h,
+        "sync_report": sync_report,
+        "conversion_chart": {
+            "labels": ["Зашли в бот", "Подписались"],
+            "values": [total_users, subscribed_users],
+        },
+        "growth_chart": growth_chart,
+        "feature_chart": feature_chart,
         "activity": [
             {
                 "date": day,
@@ -163,6 +191,54 @@ def _dashboard_context(request: Request, session: Session) -> dict:
             for day, count in activity.items()
         ],
     }
+
+
+def _try_sync_subscriptions(session: Session):
+    """Пытается актуализировать подписчиков без падения UI при ошибке API."""
+    try:
+        return ensure_recent_subscription_sync(session)
+    except Exception as error:
+        session.add(
+            EventLog(
+                event_type="subscription_sync_failed",
+                details=f"{type(error).__name__}: {error}",
+            )
+        )
+        session.commit()
+        return None
+
+
+def _build_growth_chart(session: Session, since_14d: datetime) -> dict:
+    """Готовит данные роста базы за 14 дней."""
+    labels = []
+    daily_values = []
+    for index in range(14):
+        day = (since_14d + timedelta(days=index)).date()
+        next_day = day + timedelta(days=1)
+        count = (
+            session.query(func.count(User.user_id))
+            .filter(User.created_at >= datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc))
+            .filter(User.created_at < datetime.combine(next_day, datetime.min.time(), tzinfo=timezone.utc))
+            .scalar()
+            or 0
+        )
+        labels.append(day.strftime("%d.%m"))
+        daily_values.append(count)
+    return {"labels": labels, "values": daily_values}
+
+
+def _build_feature_chart(session: Session) -> dict:
+    """Считает популярность функций по events_log."""
+    rows = (
+        session.query(EventLog.event_type, func.count(EventLog.id))
+        .group_by(EventLog.event_type)
+        .order_by(func.count(EventLog.id).desc())
+        .limit(6)
+        .all()
+    )
+    labels = [row[0] for row in rows] or ["Нет данных"]
+    values = [row[1] for row in rows] or [0]
+    return {"labels": labels, "values": values}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -204,7 +280,7 @@ async def users_page(
         name="admin/users.html",
         context={
             "request": request,
-            "title": "Users",
+            "title": "Пользователи",
             "users": users,
             "q": q or "",
         },
@@ -273,7 +349,7 @@ async def broadcast_page(request: Request):
         name="admin/broadcast.html",
         context={
             "request": request,
-            "title": "Broadcast",
+            "title": "Рассылки",
         },
     )
 
@@ -291,7 +367,25 @@ async def send_broadcast(
         payload = BroadcastSendRequest(**body)
     else:
         form = await request.form()
-        payload = BroadcastSendRequest(text=str(form.get("text", "")))
+        media_type = str(form.get("media_type") or "").strip() or None
+        media_file_id = str(form.get("media_file_id") or "").strip() or None
+        media_upload = form.get("media_upload")
+        if hasattr(media_upload, "filename") and media_upload.filename:
+            content = await media_upload.read()
+            media_file_id = upload_media_to_max(
+                filename=media_upload.filename,
+                content=content,
+                content_type=media_upload.content_type,
+            )
+            if media_upload.content_type and media_upload.content_type.startswith("video/"):
+                media_type = "video"
+            else:
+                media_type = "image"
+        payload = BroadcastSendRequest(
+            text=str(form.get("text", "")),
+            media_type=media_type,
+            media_file_id=media_file_id,
+        )
 
     user_ids = [
         row[0]
@@ -304,6 +398,8 @@ async def send_broadcast(
     ]
     broadcast = Broadcast(
         text=payload.text,
+        media_type=payload.media_type,
+        media_file_id=payload.media_file_id,
         status="running" if user_ids else "completed",
         total_count=len(user_ids),
         sent_count=0,
@@ -317,6 +413,8 @@ async def send_broadcast(
             broadcast_id=broadcast.id,
             user_ids=user_ids,
             text=payload.text,
+            media_type=payload.media_type,
+            media_file_id=payload.media_file_id,
         )
 
     response_payload = {
@@ -324,6 +422,8 @@ async def send_broadcast(
         "status": broadcast.status,
         "total_count": broadcast.total_count,
         "sent_count": broadcast.sent_count,
+        "media_type": broadcast.media_type or "",
+        "media_file_id": broadcast.media_file_id or "",
     }
     if request.headers.get("HX-Request"):
         return templates.TemplateResponse(
@@ -412,7 +512,7 @@ async def logs_page(request: Request):
         name="admin/logs.html",
         context={
             "request": request,
-            "title": "Logs",
+            "title": "Логи",
             "logs": _read_service_logs(),
         },
     )

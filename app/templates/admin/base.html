@@ -6,19 +6,49 @@
     <title>{{ title }} · MaxIDBot</title>
     <link rel="stylesheet" href="{{ url_for('static', path='admin/dashboard.css') }}">
     <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 </head>
 <body>
     <aside class="sidebar">
-        <a class="brand" href="/admin">MaxIDBot</a>
+        <a class="brand" href="/admin">
+            <span class="brand-mark">M</span>
+            <span>MaxIDBot</span>
+        </a>
         <nav class="nav">
-            <a href="/admin">Dashboard</a>
-            <a href="/users">Users</a>
-            <a href="/broadcast">Broadcast</a>
-            <a href="/logs">Logs</a>
+            <a href="/admin">Обзор</a>
+            <a href="/users">Пользователи</a>
+            <a href="/broadcast">Рассылки</a>
+            <a href="/logs">Логи</a>
         </nav>
+        <button class="theme-toggle" type="button" data-theme-toggle>
+            <span data-theme-label>Ночная тема</span>
+        </button>
     </aside>
     <main class="page">
         {% block content %}{% endblock %}
     </main>
+    <script>
+        const storedTheme = localStorage.getItem("admin-theme");
+        const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        const initialTheme = storedTheme || (prefersDark ? "dark" : "light");
+        document.documentElement.dataset.theme = initialTheme;
+
+        function updateThemeLabel() {
+            const label = document.querySelector("[data-theme-label]");
+            if (!label) return;
+            label.textContent = document.documentElement.dataset.theme === "dark"
+                ? "Дневная тема"
+                : "Ночная тема";
+        }
+
+        document.querySelector("[data-theme-toggle]")?.addEventListener("click", () => {
+            const nextTheme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+            document.documentElement.dataset.theme = nextTheme;
+            localStorage.setItem("admin-theme", nextTheme);
+            updateThemeLabel();
+        });
+        updateThemeLabel();
+    </script>
+    {% block scripts %}{% endblock %}
 </body>
 </html>

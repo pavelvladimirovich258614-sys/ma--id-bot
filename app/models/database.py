@@ -3,7 +3,7 @@ import os
 from collections.abc import Generator
 from urllib.parse import quote_plus
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 
@@ -43,3 +43,25 @@ def init_models() -> None:
     from app.models import tables  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    _ensure_broadcast_media_columns()
+
+
+def _ensure_broadcast_media_columns() -> None:
+    """Добавляет новые колонки рассылок в уже развернутых базах."""
+    inspector = inspect(engine)
+    if not inspector.has_table("broadcasts"):
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("broadcasts")}
+    statements = []
+    if "media_type" not in columns:
+        statements.append("ALTER TABLE broadcasts ADD COLUMN media_type VARCHAR(30)")
+    if "media_file_id" not in columns:
+        statements.append("ALTER TABLE broadcasts ADD COLUMN media_file_id VARCHAR(255)")
+
+    if not statements:
+        return
+
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))

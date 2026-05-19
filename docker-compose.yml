@@ -49,6 +49,9 @@ services:
       POSTGRES_PORT: 5432
       REDIS_URL: redis://redis:6379/0
       OWNER_ID: ${OWNER_ID}
+      BOT_TOKEN: ${BOT_TOKEN}
+      API_BASE: ${API_BASE:-https://platform-api.max.ru}
+      CHANNEL_CHAT_ID: ${CHANNEL_CHAT_ID:-}
     ports:
       - "8000:8000"
     depends_on:

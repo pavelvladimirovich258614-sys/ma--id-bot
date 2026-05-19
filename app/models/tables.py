@@ -34,6 +34,8 @@ class Broadcast(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     text: Mapped[str] = mapped_column(Text, nullable=False)
+    media_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    media_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="pending", nullable=False)
     sent_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     total_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
