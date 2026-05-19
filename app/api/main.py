@@ -172,8 +172,9 @@ async def dashboard_root(
 ):
     """Показывает главную страницу панели."""
     return templates.TemplateResponse(
-        "admin/dashboard.html",
-        _dashboard_context(request, session),
+        request=request,
+        name="admin/dashboard.html",
+        context=_dashboard_context(request, session),
     )
 
 
@@ -184,8 +185,9 @@ async def dashboard(
 ):
     """Показывает главную страницу панели."""
     return templates.TemplateResponse(
-        "admin/dashboard.html",
-        _dashboard_context(request, session),
+        request=request,
+        name="admin/dashboard.html",
+        context=_dashboard_context(request, session),
     )
 
 
@@ -198,8 +200,9 @@ async def users_page(
     """Показывает страницу управления пользователями."""
     users = _find_users(session=session, q=q)
     return templates.TemplateResponse(
-        "admin/users.html",
-        {
+        request=request,
+        name="admin/users.html",
+        context={
             "request": request,
             "title": "Users",
             "users": users,
@@ -217,8 +220,9 @@ async def users_table(
     """Возвращает HTMX-фрагмент таблицы пользователей."""
     users = _find_users(session=session, q=q)
     return templates.TemplateResponse(
-        "admin/partials/users_table.html",
-        {"request": request, "users": users, "q": q or ""},
+        request=request,
+        name="admin/partials/users_table.html",
+        context={"request": request, "users": users, "q": q or ""},
     )
 
 
@@ -265,8 +269,9 @@ async def reset_user_subscription(
 async def broadcast_page(request: Request):
     """Показывает панель запуска рассылок."""
     return templates.TemplateResponse(
-        "admin/broadcast.html",
-        {
+        request=request,
+        name="admin/broadcast.html",
+        context={
             "request": request,
             "title": "Broadcast",
         },
@@ -322,8 +327,9 @@ async def send_broadcast(
     }
     if request.headers.get("HX-Request"):
         return templates.TemplateResponse(
-            "admin/partials/broadcast_progress.html",
-            {
+            request=request,
+            name="admin/partials/broadcast_progress.html",
+            context={
                 "request": request,
                 "broadcast": broadcast,
                 "progress_percent": 0.0 if user_ids else 100.0,
@@ -360,8 +366,9 @@ async def get_broadcast_status(
     }
     if request.headers.get("HX-Request"):
         return templates.TemplateResponse(
-            "admin/partials/broadcast_progress.html",
-            {
+            request=request,
+            name="admin/partials/broadcast_progress.html",
+            context={
                 "request": request,
                 "broadcast": broadcast,
                 "progress_percent": progress_percent,
@@ -387,8 +394,9 @@ async def get_broadcast_progress(
         else 100.0
     )
     return templates.TemplateResponse(
-        "admin/partials/broadcast_progress.html",
-        {
+        request=request,
+        name="admin/partials/broadcast_progress.html",
+        context={
             "request": request,
             "broadcast": broadcast,
             "progress_percent": progress_percent,
@@ -400,8 +408,9 @@ async def get_broadcast_progress(
 async def logs_page(request: Request):
     """Показывает последние строки journalctl сервиса max-id-bot."""
     return templates.TemplateResponse(
-        "admin/logs.html",
-        {
+        request=request,
+        name="admin/logs.html",
+        context={
             "request": request,
             "title": "Logs",
             "logs": _read_service_logs(),
@@ -413,8 +422,9 @@ async def logs_page(request: Request):
 async def logs_fragment(request: Request):
     """Возвращает HTMX-фрагмент логов."""
     return templates.TemplateResponse(
-        "admin/partials/logs_output.html",
-        {
+        request=request,
+        name="admin/partials/logs_output.html",
+        context={
             "request": request,
             "logs": _read_service_logs(),
         },
