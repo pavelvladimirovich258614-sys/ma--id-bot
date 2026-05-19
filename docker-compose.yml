@@ -65,7 +65,7 @@ services:
     restart: unless-stopped
     command: >
       sh -c "pip install --no-cache-dir -r docs/admin_panel/requirements_admin.txt
-      && celery -A app.tasks.broadcast.celery_app worker --loglevel=info --concurrency=1"
+      && celery -A app.tasks.broadcast.celery_app worker --loglevel=info --concurrency=1 -Q broadcasts"
     environment:
       BOT_TOKEN: ${BOT_TOKEN}
       API_BASE: ${API_BASE:-https://platform-api.max.ru}
