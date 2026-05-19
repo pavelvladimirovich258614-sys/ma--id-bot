@@ -41,3 +41,32 @@
 - [x] Проверка `is_banned` ботом через PostgreSQL на каждом защищенном запросе
 - [x] Автоматическая синхронизация подписчиков канала через MAX API
 - [x] Серверный деплой и стресс-тесты
+
+### Статус закрытия сессии 2026-05-19
+
+- [x] UI/UX админ-панели обновлен: русская навигация, светлая/темная тема, glass-style карточки пользователей, новые формы и Chart.js-графики.
+- [x] Ban/Unban исправлен: middleware бота читает `is_banned` из PostgreSQL и блокирует защищенные запросы до вызова handler.
+- [x] Синхронизация подписчиков исправлена: `/stats` и `/stats/sync` сверяют PostgreSQL с `GET /chats/{CHANNEL_CHAT_ID}/members`.
+- [x] Рассылки расширены: Celery поддерживает текстовые и медиа-сообщения через `file_id` или загрузку файла.
+- [x] Сервер 141.105.67.244 обновлен до актуального `main`, контейнеры `admin-api`, `celery`, `postgres`, `redis` работают.
+- [x] Финальная статистика после очистки тестовых пользователей: всего пользователей `1036`, подписчиков `34`, синхронизация `known_after=34`, `real_members=34`.
+
+Что работает стабильно:
+
+- Админ-панель открывается по `/admin`, страницы `/users`, `/broadcast`, `/logs` возвращают `200`.
+- Доступ к панели ограничен `OWNER_ID`.
+- Celery-worker слушает очередь `broadcasts`; Redis работает с AOF persistence.
+- Бот `max-id-bot.service` перезапущен и активен после установки зависимостей PostgreSQL.
+
+Что требует внимания в следующей сессии:
+
+- Подтвердить реальную схему MAX Upload API для медиа-файлов на живом тестовом файле; `file_id` path подготовлен, но endpoint загрузки зависит от точного ответа MAX.
+- Улучшить graceful shutdown systemd-сервиса бота: при restart сервис завершался по timeout и systemd применял SIGKILL.
+- Добавить постоянную историю sync-отчетов в отдельную таблицу, если нужна аналитика качества подписочной базы.
+
+Точка восстановления:
+
+1. Начать с `app/api/main.py` и `app/services/subscription_sync.py`, если задача про статистику или подписчиков.
+2. Начать с `middleware/subscription.py` и `database/postgres_storage.py`, если задача про ban/unban или доступ в боте.
+3. Начать с `app/tasks/broadcast.py` и `app/templates/admin/broadcast.html`, если задача про рассылки и медиа.
+4. Для проверки сервера: `docker compose ps`, `curl -H "X-Owner-Id: $OWNER_ID" http://localhost:8000/stats`, `systemctl status max-id-bot`.
