@@ -76,8 +76,13 @@ def _upsert_admin_user_sync(
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    INSERT INTO users (user_id, is_subscribed, last_activity)
-                    VALUES (%s, COALESCE(%s, false), %s)
+                    INSERT INTO users (
+                        user_id,
+                        is_subscribed,
+                        is_banned,
+                        last_activity
+                    )
+                    VALUES (%s, COALESCE(%s, false), false, %s)
                     ON CONFLICT (user_id) DO UPDATE SET
                         is_subscribed = COALESCE(%s, users.is_subscribed),
                         last_activity = EXCLUDED.last_activity
