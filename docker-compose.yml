@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -23,7 +23,7 @@ services:
     restart: unless-stopped
     command: redis-server --appendonly yes
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -39,8 +39,7 @@ services:
     container_name: maxidbot-admin-api
     restart: unless-stopped
     command: >
-      sh -c "pip install --no-cache-dir -r docs/admin_panel/requirements_admin.txt
-      && uvicorn app.api.main:app --host 0.0.0.0 --port 8000"
+      uvicorn app.api.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -49,11 +48,15 @@ services:
       POSTGRES_PORT: 5432
       REDIS_URL: redis://redis:6379/0
       OWNER_ID: ${OWNER_ID}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      ADMIN_PASSWORD_SHA256: ${ADMIN_PASSWORD_SHA256:-}
+      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-}
+      TRUSTED_ADMIN_IPS: ${TRUSTED_ADMIN_IPS:-}
       BOT_TOKEN: ${BOT_TOKEN}
       API_BASE: ${API_BASE:-https://platform-api.max.ru}
       CHANNEL_CHAT_ID: ${CHANNEL_CHAT_ID:-}
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -67,8 +70,7 @@ services:
     container_name: maxidbot-celery-worker
     restart: unless-stopped
     command: >
-      sh -c "pip install --no-cache-dir -r docs/admin_panel/requirements_admin.txt
-      && celery -A app.tasks.broadcast.celery_app worker --loglevel=info --concurrency=1 -Q broadcasts"
+      celery -A app.tasks.celery_app worker --loglevel=info -Q broadcasts
     environment:
       BOT_TOKEN: ${BOT_TOKEN}
       API_BASE: ${API_BASE:-https://platform-api.max.ru}
