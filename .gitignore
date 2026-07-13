@@ -6,3 +6,7 @@ venv/
 .venv/
 .git/
 admin_dashboard_dev.sqlite3*
+
+.tmp_admin_audit/
+.tmp_deploy/
+.tmp_test_parser_direct/
