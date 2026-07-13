@@ -3,7 +3,6 @@
 """
 import logging
 from maxapi.types import BotAdded
-from maxapi.enums.parse_mode import ParseMode
 
 logger = logging.getLogger(__name__)
 
@@ -57,23 +56,23 @@ def register_bot_added_handler(dp):
                 participants_count = getattr(chat_info, 'participants_count', 'N/A')
                 description = getattr(chat_info, 'description', None)
                 text = (
-                    f"📣 <b>Бот добавлен в канал:</b>\n\n"
-                    f"<b>Channel ID:</b> <code>{chat_id}</code>\n"
-                    f"<b>Название:</b> {title}\n"
+                    f"📣 Бот добавлен в канал:\n\n"
+                    f"Channel ID: {chat_id}\n"
+                    f"Название: {title}\n"
                 )
                 if link:
-                    text += f"<b>Ссылка:</b> {link}\n"
-                text += f"<b>Подписчиков:</b> {participants_count}\n"
+                    text += f"Ссылка: {link}\n"
+                text += f"Подписчиков: {participants_count}\n"
                 if description:
-                    text += f"<b>Описание:</b> {description}\n"
-                text += "\n<i>Напишите /start боту в личку для главного меню</i>"
+                    text += f"Описание: {description}\n"
+                text += "\nНапишите /start боту в личку для главного меню"
             else:
                 # Fallback без информации о чате
                 text = (
-                    f"📣 <b>Бот добавлен в канал.</b>\n\n"
-                    f"<b>Channel ID:</b> <code>{chat_id}</code>\n\n"
-                    f"<i>Подробная информация о канале недоступна. "
-                    f"Возможно, у бота недостаточно прав.</i>\n\n"
+                    f"📣 Бот добавлен в канал.\n\n"
+                    f"Channel ID: {chat_id}\n\n"
+                    f"Подробная информация о канале недоступна. "
+                    f"Возможно, у бота недостаточно прав.\n\n"
                     f"Напишите /start боту в личку для главного меню"
                 )
         else:
@@ -84,20 +83,20 @@ def register_bot_added_handler(dp):
                 is_public = getattr(chat_info, 'is_public', False)
                 link = getattr(chat_info, 'link', None)
                 text = (
-                    f"💬 <b>Бот добавлен в групповой чат:</b>\n\n"
-                    f"<b>Chat ID:</b> <code>{chat_id}</code>\n"
-                    f"<b>Название:</b> {title}\n"
-                    f"<b>Участников:</b> {participants_count}\n"
+                    f"💬 Бот добавлен в групповой чат:\n\n"
+                    f"Chat ID: {chat_id}\n"
+                    f"Название: {title}\n"
+                    f"Участников: {participants_count}\n"
                 )
                 if is_public and link:
-                    text += f"<b>Ссылка:</b> {link}\n"
-                text += "\n<i>Чат успешно подключён!</i>\n\n"
-                text += "<i>Напишите /start боту в личку для главного меню</i>"
+                    text += f"Ссылка: {link}\n"
+                text += "\nЧат успешно подключён!\n\n"
+                text += "Напишите /start боту в личку для главного меню"
             else:
                 text = (
-                    f"💬 <b>Бот добавлен в групповой чат.</b>\n\n"
-                    f"<b>Chat ID:</b> <code>{chat_id}</code>\n\n"
-                    f"<i>Подробная информация о чате недоступна.</i>\n\n"
+                    f"💬 Бот добавлен в групповой чат.\n\n"
+                    f"Chat ID: {chat_id}\n\n"
+                    f"Подробная информация о чате недоступна.\n\n"
                     f"Напишите /start боту в личку для главного меню"
                 )
 
@@ -107,7 +106,6 @@ def register_bot_added_handler(dp):
             await event.bot.send_message(
                 chat_id=chat_id,
                 text=text,
-                parse_mode=ParseMode.HTML
             )
             logger.info(f"Message sent to chat/channel {chat_id}")
             sent_to_chat = True
@@ -121,7 +119,7 @@ def register_bot_added_handler(dp):
                 if sent_to_chat:
                     confirm_text = (
                         f"📣 Информация о канале отправлена в сам канал.\n\n"
-                        f"<b>Channel ID:</b> <code>{chat_id}</code>\n\n"
+                        f"Channel ID: {chat_id}\n\n"
                         f"Напишите /start для главного меню"
                     )
                 else:
@@ -131,7 +129,6 @@ def register_bot_added_handler(dp):
                 await event.bot.send_message(
                     user_id=user.user_id,
                     text=confirm_text,
-                    parse_mode=ParseMode.HTML
                 )
                 logger.info(f"Channel info sent to user's private chat (user_id={user.user_id})")
             except Exception as e:
@@ -143,10 +140,10 @@ def register_bot_added_handler(dp):
                 await event.bot.send_message(
                     user_id=user.user_id,
                     text=text,
-                    parse_mode=ParseMode.HTML
                 )
                 logger.info(f"Message sent to user's private chat (user_id={user.user_id})")
             except Exception as e:
                 logger.error(f"Failed to send message to user: {e}", exc_info=True)
 
     logger.info("Bot added handler registered")
+

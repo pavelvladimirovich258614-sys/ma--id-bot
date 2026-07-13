@@ -3,7 +3,6 @@
 """
 import logging
 from maxapi.types import BotStarted, MessageCreated, Command
-from maxapi.enums.parse_mode import ParseMode
 from keyboards.main_menu import main_menu_keyboard, WELCOME_TEXT
 
 logger = logging.getLogger(__name__)
@@ -31,7 +30,6 @@ def register_start_handlers(dp):
             await event.bot.send_message(
                 chat_id=event.chat_id,
                 text=WELCOME_TEXT,
-                parse_mode=ParseMode.HTML,
                 attachments=[keyboard]
             )
         except Exception as e:
@@ -57,7 +55,6 @@ def register_start_handlers(dp):
             keyboard = main_menu_keyboard()
             await event.message.answer(
                 text=WELCOME_TEXT,
-                parse_mode=ParseMode.HTML,
                 attachments=[keyboard]
             )
         except Exception as e:
@@ -83,21 +80,20 @@ def register_start_handlers(dp):
             )
 
             help_text = (
-                "ℹ️ <b>Справка по боту</b>\n\n"
+                "ℹ️ Справка по боту\n\n"
                 "Я помогаю узнать ID различных сущностей "
                 "в мессенджере MAX.\n\n"
-                "👤 Нажмите <b>Пользователь</b> — покажу ваш ID.\n"
+                "👤 Нажмите Пользователь — покажу ваш ID.\n"
                 "📨 Перешлите сообщение — покажу ID отправителя "
                 "или чата-источника.\n"
-                "💬 Нажмите <b>Чат</b> — объясню как узнать ID чата.\n"
-                "📣 Нажмите <b>Канал</b> — объясню как узнать ID канала.\n"
-                "🤖 Нажмите <b>Бот</b> — покажу информацию о боте.\n"
+                "💬 Нажмите Чат — объясню как узнать ID чата.\n"
+                "📣 Нажмите Канал — объясню как узнать ID канала.\n"
+                "🤖 Нажмите Бот — покажу информацию о боте.\n"
                 "🎟 Отправьте стикер — покажу его код и ссылку."
             )
             keyboard = main_menu_keyboard()
             await event.message.answer(
                 text=help_text,
-                parse_mode=ParseMode.HTML,
                 attachments=[keyboard]
             )
         except Exception as e:
@@ -106,3 +102,4 @@ def register_start_handlers(dp):
             )
 
     logger.info("Start handlers registered")
+
