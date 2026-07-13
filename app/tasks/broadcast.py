@@ -1,4 +1,5 @@
 """Celery-задачи массовых рассылок через MAX API."""
+import json
 import os
 import random
 import time
@@ -38,12 +39,28 @@ def _max_api_url(path: str) -> str:
 
 def _media_attachment(media_type: str, media_file_id: str) -> dict:
     """Формирует вложение MAX для ранее загруженного медиа."""
+    try:
+        payload = json.loads(media_file_id)
+        if not isinstance(payload, dict):
+            payload = {"token": str(media_file_id)}
+    except json.JSONDecodeError:
+        payload = {"token": media_file_id}
+
     return {
         "type": media_type,
-        "payload": {
-            "file_id": media_file_id,
-        },
+        "payload": payload,
     }
+
+
+def _upload_type_from_content_type(content_type: str | None) -> str:
+    """Определяет тип загрузки MAX API по MIME type."""
+    if content_type and content_type.startswith("image/"):
+        return "image"
+    if content_type and content_type.startswith("video/"):
+        return "video"
+    if content_type and content_type.startswith("audio/"):
+        return "audio"
+    return "file"
 
 
 def upload_media_to_max(
@@ -51,28 +68,60 @@ def upload_media_to_max(
     content: bytes,
     content_type: str | None,
 ) -> str:
-    """Загружает медиа в MAX API и возвращает file_id."""
+    """Загружает медиа в MAX API и возвращает token/payload для сообщения."""
     token = os.getenv("BOT_TOKEN")
     if not token:
         raise RuntimeError("BOT_TOKEN не настроен")
 
-    response = httpx.post(
+    upload_type = _upload_type_from_content_type(content_type)
+    upload_request = httpx.post(
         _max_api_url("/uploads"),
         headers={"Authorization": token},
-        files={"file": (filename, content, content_type or "application/octet-stream")},
+        params={"type": upload_type},
+        timeout=15.0,
+    )
+    upload_request.raise_for_status()
+    upload_meta = upload_request.json()
+    upload_url = upload_meta.get("url")
+    if not upload_url:
+        raise RuntimeError("MAX API не вернул URL для загрузки медиа")
+
+    upload_response = httpx.post(
+        upload_url,
+        files={"data": (filename, content, content_type or "application/octet-stream")},
         timeout=60.0,
     )
-    response.raise_for_status()
-    payload = response.json()
-    file_id = (
-        payload.get("file_id")
-        or payload.get("id")
-        or payload.get("fileId")
-        or payload.get("token")
-    )
-    if not file_id:
-        raise RuntimeError("MAX API не вернул file_id после загрузки медиа")
-    return str(file_id)
+    upload_response.raise_for_status()
+    payload = upload_response.json()
+
+    attachment_token = payload.get("token") or upload_meta.get("token")
+    if attachment_token:
+        return str(attachment_token)
+
+    if payload:
+        return json.dumps(payload, ensure_ascii=False)
+
+    raise RuntimeError("MAX API не вернул payload/token после загрузки медиа")
+
+
+def _response_contains_attachment_not_ready(response: httpx.Response) -> bool:
+    """Проверяет временную ошибку обработки загруженного файла."""
+    try:
+        payload = response.json()
+    except ValueError:
+        return False
+    return payload.get("code") == "attachment.not.ready"
+
+
+def _raise_for_status_with_body(response: httpx.Response) -> None:
+    """Добавляет тело ответа MAX API в ошибку доставки."""
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as error:
+        body = response.text[:500]
+        raise RuntimeError(
+            f"MAX API вернул HTTP {response.status_code}: {body}"
+        ) from error
 
 
 def _send_message_to_max(
@@ -91,14 +140,25 @@ def _send_message_to_max(
     if media_type and media_file_id:
         payload["attachments"] = [_media_attachment(media_type, media_file_id)]
 
-    response = httpx.post(
-        _max_api_url("/messages"),
-        headers={"Authorization": token},
-        params=params,
-        json=payload,
-        timeout=15.0,
-    )
-    response.raise_for_status()
+    for attempt in range(4):
+        response = httpx.post(
+            _max_api_url("/messages"),
+            headers={"Authorization": token},
+            params=params,
+            json=payload,
+            timeout=15.0,
+        )
+        if response.status_code < 400:
+            return
+        if (
+            media_type
+            and media_file_id
+            and _response_contains_attachment_not_ready(response)
+            and attempt < 3
+        ):
+            time.sleep(2 ** attempt)
+            continue
+        _raise_for_status_with_body(response)
 
 
 def _log_delivery_error(

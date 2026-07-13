@@ -1,0 +1,29 @@
+{% extends "admin/base.html" %}
+
+{% block content %}
+<header class="page-header">
+    <div>
+        <h1>Найденные объекты</h1>
+        <p>ID, найденные пользователями через модуль «Разведка ID».</p>
+    </div>
+</header>
+
+<section class="panel">
+    <form class="toolbar"
+          hx-get="/discovered-entities/table"
+          hx-target="#discovered-entities-table"
+          hx-trigger="change, submit">
+        <select name="entity_type">
+            <option value="" {{ "selected" if not entity_type else "" }}>Все типы</option>
+            <option value="user" {{ "selected" if entity_type == "user" else "" }}>Пользователи</option>
+            <option value="chat" {{ "selected" if entity_type == "chat" else "" }}>Чаты</option>
+            <option value="bot" {{ "selected" if entity_type == "bot" else "" }}>Боты</option>
+        </select>
+        <button type="submit">Показать</button>
+        <a class="secondary-button" href="/discovered-entities">Сбросить</a>
+    </form>
+    <div id="discovered-entities-table">
+        {% include "admin/partials/discovered_entities_table.html" %}
+    </div>
+</section>
+{% endblock %}

@@ -1,0 +1,40 @@
+<div class="data-table-wrap">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>ID объекта</th>
+                <th>Тип</th>
+                <th>Кто нашел</th>
+                <th>Дата</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for entity in entities %}
+                <tr>
+                    <td><code>{{ entity.entity_id }}</code></td>
+                    <td>
+                        <span class="badge {{ 'ok' if entity.entity_type == 'chat' else 'muted-badge' }}">
+                            {% if entity.entity_type == "user" %}
+                                Пользователь
+                            {% elif entity.entity_type == "chat" %}
+                                Чат
+                            {% elif entity.entity_type == "bot" %}
+                                Бот
+                            {% else %}
+                                {{ entity.entity_type }}
+                            {% endif %}
+                        </span>
+                    </td>
+                    <td><code>{{ entity.discovered_by_user_id }}</code></td>
+                    <td>{{ entity.timestamp.strftime("%d.%m.%Y %H:%M") if entity.timestamp else "нет данных" }}</td>
+                </tr>
+            {% else %}
+                <tr>
+                    <td colspan="4">
+                        <div class="empty-state">Найденных объектов пока нет.</div>
+                    </td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>

@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ title }} · MaxIDBot</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', path='admin/favicon.svg') }}">
     <link rel="stylesheet" href="{{ url_for('static', path='admin/dashboard.css') }}">
     <script src="{{ url_for('static', path='admin/htmx.min.js') }}"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
@@ -17,8 +18,10 @@
         <nav class="nav">
             <a href="/admin">Обзор</a>
             <a href="/users">Пользователи</a>
+            <a href="/discovered-entities">Найденные объекты</a>
             <a href="/broadcast">Рассылки</a>
             <a href="/logs">Логи</a>
+            <a href="/logout">Выйти</a>
         </nav>
         <button class="theme-toggle" type="button" data-theme-toggle>
             <span data-theme-label>Ночная тема</span>

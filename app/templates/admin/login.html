@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ title }} · MaxIDBot</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', path='admin/favicon.svg') }}">
+    <link rel="stylesheet" href="{{ url_for('static', path='admin/dashboard.css') }}">
+</head>
+<body class="login-body">
+    <main class="login-shell">
+        <section class="login-panel">
+            <div class="login-brand">
+                <span class="brand-mark">M</span>
+                <span>MaxIDBot</span>
+            </div>
+            <form class="login-form" method="post" action="/login">
+                <input type="hidden" name="next" value="{{ next }}">
+                <label>
+                    Пароль администратора
+                    <input
+                        name="password"
+                        type="password"
+                        autocomplete="current-password"
+                        required
+                        autofocus
+                    >
+                </label>
+                {% if error %}
+                <p class="form-error">{{ error }}</p>
+                {% endif %}
+                <button type="submit">Войти</button>
+            </form>
+        </section>
+    </main>
+</body>
+</html>

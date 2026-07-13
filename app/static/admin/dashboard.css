@@ -253,6 +253,45 @@ h2 {
     gap: 12px;
 }
 
+.login-body {
+    display: grid;
+    place-items: center;
+    padding: 24px;
+}
+
+.login-shell {
+    width: min(100%, 420px);
+}
+
+.login-panel {
+    display: grid;
+    gap: 22px;
+    padding: 28px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(20px);
+}
+
+.login-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 22px;
+    font-weight: 800;
+}
+
+.login-form {
+    display: grid;
+    gap: 14px;
+}
+
+.form-error {
+    color: var(--danger);
+    font-size: 14px;
+}
+
 label {
     display: grid;
     gap: 7px;
@@ -392,6 +431,37 @@ button:disabled {
 .muted-badge {
     background: var(--surface-soft);
     color: var(--muted);
+}
+
+.data-table-wrap {
+    overflow-x: auto;
+}
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 680px;
+}
+
+.data-table th,
+.data-table td {
+    padding: 12px 10px;
+    border-bottom: 1px solid var(--line);
+    text-align: left;
+    vertical-align: middle;
+}
+
+.data-table th {
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.data-table code {
+    padding: 3px 6px;
+    border-radius: 6px;
+    background: var(--surface-soft);
+    color: var(--text);
 }
 
 .empty-state {

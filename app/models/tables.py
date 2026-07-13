@@ -60,3 +60,19 @@ class EventLog(Base):
         server_default=func.now(),
         nullable=False,
     )
+
+
+class DiscoveredEntity(Base):
+    """Объект, найденный модулем ID-Harvester."""
+
+    __tablename__ = "discovered_entities"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    entity_id: Mapped[str] = mapped_column(Text, nullable=False)
+    entity_type: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    discovered_by_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )

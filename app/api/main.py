@@ -1,10 +1,15 @@
 """FastAPI backend первой фазы админ-панели."""
+import hashlib
+import hmac
 import os
+import secrets
 import subprocess
+import time
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 
-from fastapi import Depends, FastAPI, Request, status
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
@@ -13,13 +18,15 @@ from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.models.database import get_session, init_models
-from app.models.tables import Broadcast, EventLog, User
+from app.models.tables import Broadcast, DiscoveredEntity, EventLog, User
 from app.services.subscription_sync import ensure_recent_subscription_sync, sync_subscriptions
 from app.tasks.broadcast import enqueue_broadcast, upload_media_to_max
 
 
 OWNER_HEADER = "X-Owner-Id"
 OWNER_COOKIE = "owner_id"
+SESSION_COOKIE = "admin_refresh_token"
+SESSION_TTL_SECONDS = 60 * 60 * 24 * 180
 templates = Jinja2Templates(directory="app/templates")
 
 
@@ -32,37 +39,176 @@ class BroadcastSendRequest(BaseModel):
 
 
 class OwnerOnlyMiddleware(BaseHTTPMiddleware):
-    """Ограничивает доступ к панели владельцем из OWNER_ID."""
+    """Ограничивает доступ к панели владельцем или доверенной сессией."""
 
     async def dispatch(self, request: Request, call_next):
-        owner_id = os.getenv("OWNER_ID")
-        request_owner_id = (
-            request.headers.get(OWNER_HEADER)
-            or request.query_params.get("owner_id")
-            or request.cookies.get(OWNER_COOKIE)
-        )
+        if _is_public_path(request.url.path):
+            return await call_next(request)
 
-        if not owner_id:
+        if not _has_any_auth_config():
             return JSONResponse(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                content={"detail": "OWNER_ID не настроен"},
+                content={"detail": "Доступ к админ-панели не настроен"},
             )
 
-        if request_owner_id != owner_id:
+        if not _is_authorized_request(request):
+            if _wants_html(request):
+                next_url = quote(str(request.url.path))
+                if request.url.query:
+                    next_url = quote(f"{request.url.path}?{request.url.query}")
+                return RedirectResponse(
+                    url=f"/login?next={next_url}",
+                    status_code=status.HTTP_303_SEE_OTHER,
+                )
             return JSONResponse(
                 status_code=status.HTTP_403_FORBIDDEN,
                 content={"detail": "Доступ разрешен только владельцу"},
             )
 
         response = await call_next(request)
-        if request.query_params.get("owner_id") == owner_id:
+        owner_id = os.getenv("OWNER_ID")
+        if owner_id and request.query_params.get("owner_id") == owner_id:
             response.set_cookie(
                 OWNER_COOKIE,
                 owner_id,
                 httponly=True,
                 samesite="lax",
+                max_age=SESSION_TTL_SECONDS,
             )
         return response
+
+
+def _is_public_path(path: str) -> bool:
+    """Определяет маршруты, доступные без авторизации."""
+    return (
+        path == "/login"
+        or path.startswith("/static/")
+        or path in {"/favicon.ico", "/healthz"}
+    )
+
+
+def _has_any_auth_config() -> bool:
+    return bool(
+        os.getenv("OWNER_ID")
+        or os.getenv("ADMIN_PASSWORD")
+        or os.getenv("ADMIN_PASSWORD_SHA256")
+        or os.getenv("TRUSTED_ADMIN_IPS")
+    )
+
+
+def _is_authorized_request(request: Request) -> bool:
+    if _is_trusted_ip(request):
+        return True
+
+    owner_id = os.getenv("OWNER_ID")
+    request_owner_id = (
+        request.headers.get(OWNER_HEADER)
+        or request.query_params.get("owner_id")
+        or request.cookies.get(OWNER_COOKIE)
+    )
+    if owner_id and request_owner_id == owner_id:
+        return True
+
+    return _is_valid_session_token(request.cookies.get(SESSION_COOKIE))
+
+
+def _is_trusted_ip(request: Request) -> bool:
+    trusted_ips = {
+        item.strip()
+        for item in os.getenv("TRUSTED_ADMIN_IPS", "").split(",")
+        if item.strip()
+    }
+    if not trusted_ips:
+        return False
+
+    client_ip = _client_ip(request)
+    return client_ip in trusted_ips
+
+
+def _client_ip(request: Request) -> str:
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        return forwarded_for.split(",", 1)[0].strip()
+    return request.client.host if request.client else ""
+
+
+def _wants_html(request: Request) -> bool:
+    accept = request.headers.get("accept", "")
+    return "text/html" in accept or "*/*" in accept
+
+
+def _is_https_request(request: Request) -> bool:
+    return (
+        request.url.scheme == "https"
+        or request.headers.get("x-forwarded-proto") == "https"
+    )
+
+
+def _safe_next_url(next_url: str) -> str:
+    if not next_url.startswith("/") or next_url.startswith("//"):
+        return "/admin"
+    return next_url
+
+
+def _password_matches(password: str) -> bool:
+    expected_hash = os.getenv("ADMIN_PASSWORD_SHA256")
+    if expected_hash:
+        actual_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
+        return hmac.compare_digest(actual_hash, expected_hash)
+
+    expected_password = os.getenv("ADMIN_PASSWORD")
+    if expected_password:
+        return hmac.compare_digest(password, expected_password)
+
+    return False
+
+
+def _session_secret() -> str:
+    return (
+        os.getenv("ADMIN_SESSION_SECRET")
+        or os.getenv("ADMIN_PASSWORD_SHA256")
+        or os.getenv("ADMIN_PASSWORD")
+        or os.getenv("OWNER_ID")
+        or ""
+    )
+
+
+def _create_session_token() -> str:
+    issued_at = int(time.time())
+    expires_at = issued_at + SESSION_TTL_SECONDS
+    nonce = secrets.token_urlsafe(16)
+    payload = f"v1.{issued_at}.{expires_at}.{nonce}"
+    signature = hmac.new(
+        _session_secret().encode("utf-8"),
+        payload.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"{payload}.{signature}"
+
+
+def _is_valid_session_token(token: str | None) -> bool:
+    secret = _session_secret()
+    if not token or not secret:
+        return False
+
+    parts = token.split(".")
+    if len(parts) != 5 or parts[0] != "v1":
+        return False
+
+    payload = ".".join(parts[:4])
+    expected_signature = hmac.new(
+        secret.encode("utf-8"),
+        payload.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(parts[4], expected_signature):
+        return False
+
+    try:
+        expires_at = int(parts[2])
+    except ValueError:
+        return False
+    return expires_at > int(time.time())
 
 
 app = FastAPI(title="MaxIDBot Admin API")
@@ -74,6 +220,78 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 def on_startup() -> None:
     """Создает таблицы первой фазы, если они еще не существуют."""
     init_models()
+
+
+@app.get("/healthz")
+async def healthz() -> dict[str, str]:
+    """Легкая проверка работоспособности admin-api."""
+    return {"status": "ok"}
+
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request, next: str = "/admin"):
+    """Показывает форму входа администратора."""
+    return templates.TemplateResponse(
+        request=request,
+        name="admin/login.html",
+        context={
+            "request": request,
+            "title": "Вход",
+            "next": _safe_next_url(next),
+            "error": "",
+        },
+    )
+
+
+@app.post("/login", response_class=HTMLResponse)
+async def login_submit(
+    request: Request,
+    password: str = Form(...),
+    next: str = Form("/admin"),
+):
+    """Создает долгоживущую сессию администратора."""
+    safe_next = _safe_next_url(next)
+    if not _password_matches(password):
+        return templates.TemplateResponse(
+            request=request,
+            name="admin/login.html",
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            context={
+                "request": request,
+                "title": "Вход",
+                "next": safe_next,
+                "error": "Неверный пароль",
+            },
+        )
+
+    response = RedirectResponse(
+        url=safe_next,
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+    response.set_cookie(
+        SESSION_COOKIE,
+        _create_session_token(),
+        max_age=SESSION_TTL_SECONDS,
+        httponly=True,
+        secure=_is_https_request(request),
+        samesite="lax",
+    )
+    return response
+
+
+@app.get("/logout")
+async def logout(request: Request):
+    """Удаляет cookie-сессию администратора."""
+    response = RedirectResponse(
+        url="/login",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+    response.delete_cookie(
+        SESSION_COOKIE,
+        secure=_is_https_request(request),
+        samesite="lax",
+    )
+    return response
 
 
 @app.get("/stats")
@@ -311,6 +529,94 @@ def _find_users(session: Session, q: str | None) -> list[User]:
         except ValueError:
             return []
     return query.limit(200).all()
+
+
+@app.get("/api/discovered-entities")
+async def discovered_entities_api(
+    entity_type: str | None = None,
+    session: Session = Depends(get_session),
+) -> list[dict[str, int | str]]:
+    """Возвращает найденные ID с необязательным фильтром по типу."""
+    entities = _find_discovered_entities(session=session, entity_type=entity_type)
+    return [_serialize_discovered_entity(entity) for entity in entities]
+
+
+@app.get("/discovered-entities", response_class=HTMLResponse)
+async def discovered_entities_page(
+    request: Request,
+    entity_type: str | None = None,
+    session: Session = Depends(get_session),
+):
+    """Показывает страницу найденных объектов ID-Harvester."""
+    entities = _find_discovered_entities(
+        session=session,
+        entity_type=entity_type,
+    )
+    return templates.TemplateResponse(
+        request=request,
+        name="admin/discovered_entities.html",
+        context={
+            "request": request,
+            "title": "Найденные объекты",
+            "entities": entities,
+            "entity_type": entity_type or "",
+        },
+    )
+
+
+@app.get("/discovered-entities/table", response_class=HTMLResponse)
+async def discovered_entities_table(
+    request: Request,
+    entity_type: str | None = None,
+    session: Session = Depends(get_session),
+):
+    """Возвращает HTMX-фрагмент таблицы найденных объектов."""
+    entities = _find_discovered_entities(
+        session=session,
+        entity_type=entity_type,
+    )
+    return templates.TemplateResponse(
+        request=request,
+        name="admin/partials/discovered_entities_table.html",
+        context={
+            "request": request,
+            "entities": entities,
+            "entity_type": entity_type or "",
+        },
+    )
+
+
+def _find_discovered_entities(
+    *,
+    session: Session,
+    entity_type: str | None,
+) -> list[DiscoveredEntity]:
+    """Возвращает найденные объекты с фильтром по типу."""
+    query = session.query(DiscoveredEntity).order_by(
+        DiscoveredEntity.timestamp.desc()
+    )
+    if entity_type:
+        normalized_type = entity_type.strip().lower()
+        if normalized_type not in {"user", "chat", "bot"}:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Некорректный тип объекта",
+            )
+        query = query.filter(DiscoveredEntity.entity_type == normalized_type)
+    return query.limit(500).all()
+
+
+def _serialize_discovered_entity(
+    entity: DiscoveredEntity,
+) -> dict[str, int | str]:
+    """Готовит найденный объект для JSON API."""
+    return {
+        "id": entity.id,
+        "entity_id": entity.entity_id,
+        "entity_type": entity.entity_type,
+        "discovered_by_user_id": entity.discovered_by_user_id,
+        "timestamp": entity.timestamp.isoformat() if entity.timestamp else "",
+    }
 
 
 @app.post("/users/{user_id}/toggle-ban", response_class=HTMLResponse)
