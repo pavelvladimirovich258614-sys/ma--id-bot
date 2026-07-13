@@ -41,8 +41,8 @@ max-id-bot/
 ├── handlers/              # Event handlers
 │   ├── __init__.py        # Package marker
 │   ├── start.py           # bot_started event, /start command
-│   ├── callbacks.py       # Inline button callbacks (User, Chat, Channel, Bot, Sticker)
-│   ├── messages.py        # Sticker handler, forwarded messages, channel lookup
+│   ├── callbacks.py       # Inline button callbacks (User, Chat, Channel, Bot, Sticker, Harvest)
+│   ├── messages.py        # Sticker handler, forwarded messages, channel lookup, harvest flows
 │   └── bot_added.py       # Bot added to chat/channel handler
 ├── keyboards/             # Inline keyboards
 │   ├── __init__.py        # Exports main_menu_keyboard
@@ -312,6 +312,8 @@ Main menu structure (from `keyboards/main_menu.py`):
 │ 👤 User         │ 🤖 Bot          │  payload: get_user_id / get_bot_id
 ├─────────────────┴─────────────────┤
 │ 🎟 Sticker                         │  payload: get_sticker_info
+├─────────────────┴─────────────────┤
+│ 🔍 Harvest ID                       │  payload: harvest_menu / harvest_by_link / harvest_by_message / harvest_bot_id
 └───────────────────────────────────┘
 ```
 
