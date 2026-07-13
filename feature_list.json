@@ -1,0 +1,65 @@
+{
+  "project": "MaxIDBot",
+  "updated_at": "2026-05-22",
+  "session_state": "comment-monitoring-foundation",
+  "features": [
+    {
+      "id": "feat-id-basics",
+      "name": "Базовое определение ID",
+      "status": "implemented",
+      "notes": "Бот определяет ID пользователей, ботов, чатов, каналов и стикеров через MAX API."
+    },
+    {
+      "id": "feat-id-harvester",
+      "name": "Разведка ID",
+      "status": "implemented",
+      "notes": "Доступны ID по ссылке, ID по пересланному сообщению и ID текущего бота."
+    },
+    {
+      "id": "feat-subscription-check",
+      "name": "Проверка подписки",
+      "status": "implemented",
+      "notes": "Доступ к защищенным действиям проверяется через MAX members API и PostgreSQL."
+    },
+    {
+      "id": "feat-admin-panel",
+      "name": "Админ-панель",
+      "status": "implemented",
+      "notes": "Пользователи, рассылки, логи и найденные ID доступны через FastAPI admin UI."
+    },
+    {
+      "id": "feat-broadcasts",
+      "name": "Рассылки",
+      "status": "implemented",
+      "notes": "Celery оставлен только для фоновых рассылок через очередь broadcasts."
+    },
+    {
+      "id": "feat-admin-ui",
+      "name": "Поля мониторинга в админ-панели",
+      "priority": "P0",
+      "status": "planned",
+      "notes": "Создать поля в админ-панели для кодового слова и времени эфира."
+    },
+    {
+      "id": "feat-comment-listener",
+      "name": "Слушатель комментариев Tapbox",
+      "priority": "P1",
+      "status": "planned",
+      "notes": "Интегрировать сервис комментариев Tapbox для перехвата сообщений канала MAX."
+    },
+    {
+      "id": "feat-keyword-filter",
+      "name": "Фильтр кодового слова",
+      "priority": "P1",
+      "status": "planned",
+      "notes": "Сохранять ID пользователей, которые написали заданное кодовое слово."
+    },
+    {
+      "id": "feat-notifier",
+      "name": "Планировщик уведомлений",
+      "priority": "P2",
+      "status": "planned",
+      "notes": "Запланировать и отправлять уведомления в личные сообщения выбранным пользователям."
+    }
+  ]
+}
