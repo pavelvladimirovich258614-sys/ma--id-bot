@@ -53,7 +53,7 @@ services:
       ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-}
       TRUSTED_ADMIN_IPS: ${TRUSTED_ADMIN_IPS:-}
       BOT_TOKEN: ${BOT_TOKEN}
-      API_BASE: ${API_BASE:-https://platform-api.max.ru}
+      API_BASE: ${API_BASE:-https://platform-api2.max.ru}
       CHANNEL_CHAT_ID: ${CHANNEL_CHAT_ID:-}
     ports:
       - "127.0.0.1:8000:8000"
@@ -73,7 +73,7 @@ services:
       celery -A app.tasks.celery_app worker --loglevel=info -Q broadcasts
     environment:
       BOT_TOKEN: ${BOT_TOKEN}
-      API_BASE: ${API_BASE:-https://platform-api.max.ru}
+      API_BASE: ${API_BASE:-https://platform-api2.max.ru}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}

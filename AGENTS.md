@@ -297,7 +297,7 @@ await event.bot.send_message(
 
 - MAX API для проверки участников канала требует внутренний числовой `chat_id`, например `-72143469522347`, а не публичный biz-ID вида `id752703975446_biz`.
 - Публичный `CHANNEL_ID` и `CHANNEL_LINK` нужны для пользовательской ссылки на канал, но endpoint `/chats/{chatId}/members` должен использовать `CHANNEL_CHAT_ID`.
-- Рабочая проверка подписки выполняется через `GET https://platform-api.max.ru/chats/{CHANNEL_CHAT_ID}/members?user_ids={user_id}` с raw-token в заголовке `Authorization`.
+- Рабочая проверка подписки выполняется через `GET https://platform-api2.max.ru/chats/{CHANNEL_CHAT_ID}/members?user_ids={user_id}` с raw-token в заголовке `Authorization`.
 
 ---
 
@@ -331,7 +331,7 @@ Main menu structure (from `keyboards/main_menu.py`):
 - Бот является аналогом `@IDd_Helper_Bot` и возвращает ID пользователей, ботов, чатов, каналов и стикеров.
 - Основная структура проекта: `bot.py`, `config.py`, `handlers/`, `keyboards/`.
 - UI и комментарии в коде пишутся на русском языке.
-- API base для проверки подписки: `https://platform-api.max.ru`.
+- API base для проверки подписки: `https://platform-api2.max.ru`.
 - Авторизация в MAX API выполняется через HTTP-заголовок `Authorization`.
 - База данных: SQLite через `aiosqlite`, таблица `users` с полями `user_id`, `usage_count`, `is_subscribed`, `last_check`.
 - Для проверки подписки на канал использовать внутренний числовой `CHANNEL_CHAT_ID`, а не публичный `CHANNEL_ID` вида `id..._biz`. Публичный ID подходит для ссылки пользователю, но `GET /chats/{chatId}/members` работает с внутренним chat ID канала.
@@ -341,7 +341,7 @@ Main menu structure (from `keyboards/main_menu.py`):
 1. Любой пользователь получает ровно 1 бесплатный запрос: любая кнопка ID, стикер или пересланное сообщение.
 2. Первый запрос переводит `usage_count` из `0` в `1` и не требует проверки подписки.
 3. Со второго запроса, когда `usage_count >= 1`, пользователь должен быть подписан на канал `CHANNEL_ID`.
-4. Проверка подписки выполняется через `GET https://platform-api.max.ru/chats/{CHANNEL_CHAT_ID}/members?user_ids={user_id}`.
+4. Проверка подписки выполняется через `GET https://platform-api2.max.ru/chats/{CHANNEL_CHAT_ID}/members?user_ids={user_id}`.
 5. Бот должен быть администратором в канале, чтобы проверять участников.
 6. В ответе API нужно искать текущий `user_id` в массиве участников.
 7. Если API проверки подписки недоступен, вернул timeout, `403` или `5xx`, пользователь считается подписанным, запрос пропускается, а в лог пишется предупреждение.

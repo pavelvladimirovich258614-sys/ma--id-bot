@@ -49,7 +49,7 @@ SUBSCRIPTION_TEXT = os.getenv(
     "Чтобы продолжить пользоваться ботом, подпишитесь на канал. "
     "После подписки нажмите /start"
 )
-API_BASE = os.getenv("API_BASE", "https://platform-api.max.ru")
+API_BASE = os.getenv("API_BASE", "https://platform-api2.max.ru")
 
 if not BOT_TOKEN:
     print("ERROR: BOT_TOKEN не найден в переменных окружения!")

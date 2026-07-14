@@ -33,7 +33,7 @@ celery_app.conf.update(
 
 def _max_api_url(path: str) -> str:
     """Возвращает абсолютный URL MAX API."""
-    api_base = os.getenv("API_BASE", "https://platform-api.max.ru").rstrip("/")
+    api_base = os.getenv("API_BASE", "https://platform-api2.max.ru").rstrip("/")
     return f"{api_base}{path}"
 
 

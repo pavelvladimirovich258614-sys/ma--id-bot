@@ -26,7 +26,7 @@ class SubscriptionSyncReport:
 
 
 def _max_api_url(path: str) -> str:
-    api_base = os.getenv("API_BASE", "https://platform-api.max.ru").rstrip("/")
+    api_base = os.getenv("API_BASE", "https://platform-api2.max.ru").rstrip("/")
     return f"{api_base}{path}"
 
 

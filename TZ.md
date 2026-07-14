@@ -16,14 +16,14 @@
 ## 2. Платформа и технологический стек
 
 ### 2.1 Платформа
-Мессенджер **MAX** (max.ru). API-домен: `platform-api.max.ru`.
+Мессенджер **MAX** (max.ru). API-домен: `platform-api2.max.ru`.
 
 ### 2.2 Рекомендуемый стек
 
 **Вариант A — Python (рекомендуется):**
 - Язык: Python 3.10+
 - Библиотека: `maxapi` (pip install maxapi) — неофициальная, но зрелая библиотека, стилистически близкая к aiogram
-- Альтернатива: прямые HTTP-запросы к `platform-api.max.ru`
+- Альтернатива: прямые HTTP-запросы к `platform-api2.max.ru`
 - Режим работы: Long Polling (для разработки/тестирования), Webhook (для продакшена)
 
 **Вариант B — JavaScript/TypeScript:**
@@ -128,7 +128,7 @@ Chat ID текущего диалога: {chat_id}
 
 **API-запрос:**
 ```
-GET https://platform-api.max.ru/me
+GET https://platform-api2.max.ru/me
 Authorization: <token>
 ```
 **Ответ:** объект User с `user_id`, `first_name`, `username`, `is_bot: true`, `description`, `avatar_url`.

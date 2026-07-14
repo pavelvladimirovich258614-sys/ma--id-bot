@@ -47,7 +47,7 @@ BOT_TOKEN=ваш_токен
 CHANNEL_ID=id752703975446_biz
 CHANNEL_LINK=https://max.ru/id752703975446_biz
 SUBSCRIPTION_TEXT=Чтобы продолжить пользоваться ботом, подпишитесь на канал:
-API_BASE=https://platform-api.max.ru
+API_BASE=https://platform-api2.max.ru
 ```
 
 Токен можно получить на [business.max.ru](https://business.max.ru) в разделе «Чат-боты» → «Интеграция» → «Получить токен».
