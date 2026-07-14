@@ -16,6 +16,7 @@ from maxapi.enums.message_link_type import MessageLinkType
 from maxapi.types import MessageCreated
 from maxapi.types.attachments.sticker import Sticker
 
+from config import CHANNEL_CHAT_ID, CHANNEL_ID, CHANNEL_LINK
 from database.postgres_storage import save_discovered_entity
 from handlers.callbacks import (
     WAITING_FOR_FORWARD,
@@ -24,7 +25,7 @@ from handlers.callbacks import (
     get_harvest_state,
     resolve_channel_link_fallback,
 )
-from keyboards.main_menu import dismiss_keyboard
+from keyboards.main_menu import dismiss_keyboard, id_harvest_keyboard
 from middleware.subscription import require_subscription
 
 logger = logging.getLogger(__name__)
@@ -79,11 +80,13 @@ async def _delete_original_message(event: MessageCreated) -> None:
             logger.warning(f"Could not delete original message: {error}")
 
 
-async def _send_feedback(message, text: str):
+async def _send_feedback(message, text: str, attachments=None):
     """Отправляет пользователю ответ с кнопкой удаления."""
+    if attachments is None:
+        attachments = [dismiss_keyboard()]
     return await message.answer(
         text=text,
-        attachments=[dismiss_keyboard()],
+        attachments=attachments,
     )
 
 
@@ -150,6 +153,60 @@ def _extract_max_link_slug(text: str) -> str | None:
     if not match:
         return None
     return match.group('slug')
+
+
+def _normalize_max_link(value: str) -> str | None:
+    """Возвращает единый slug MAX-ссылки или None."""
+    text = value.strip()
+    if not text:
+        return None
+
+    text = re.sub(r"\s+", " ", text).strip()
+    lowered = text.lower()
+
+    if lowered.startswith("http://"):
+        text = text[7:]
+        lowered = text.lower()
+    elif lowered.startswith("https://"):
+        text = text[8:]
+        lowered = text.lower()
+
+    if lowered.startswith("www."):
+        text = text[4:]
+        lowered = text.lower()
+    elif lowered.startswith("web."):
+        text = text[4:]
+        lowered = text.lower()
+
+    if lowered.startswith("max.ru/"):
+        text = text[7:]
+
+    text = text.lstrip("/")
+
+    if text.lower().startswith("@"):
+        text = text[1:]
+
+    if "#" in text:
+        text = text.split("#", 1)[0]
+    if "?" in text:
+        text = text.split("?", 1)[0]
+    text = text.rstrip("/")
+
+    if not text:
+        return None
+
+    if MAX_LINK_RE.fullmatch("https://max.ru/" + text):
+        return text
+    if MAX_LINK_RE.fullmatch("max.ru/" + text):
+        return text
+    if MAX_LINK_RE.fullmatch("@" + text):
+        return text
+    if MAX_LINK_RE.fullmatch(text):
+        return text
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", text):
+        return text
+
+    return None
 
 
 def _is_forward_link_type(link_type) -> bool:
@@ -287,7 +344,7 @@ async def _handle_harvest_link(
 ) -> bool:
     """Обрабатывает режим разведки ID по ссылке MAX."""
     await _delete_original_message(event)
-    search_query = _extract_max_link_slug(text)
+    search_query = _normalize_max_link(text)
     if not search_query:
         await _send_feedback(
             message,
@@ -296,8 +353,28 @@ async def _handle_harvest_link(
         )
         return True
 
+    chat_info = None
     try:
-        chat_info = await event.bot.get_chat_by_link(link=search_query)
+        channel_slug = _normalize_max_link(CHANNEL_LINK)
+        channel_id_slug = _normalize_max_link(CHANNEL_ID) if CHANNEL_ID else None
+
+        input_slug = search_query
+        matched_slugs = {
+            slug
+            for slug in (channel_id_slug, channel_slug)
+            if isinstance(slug, str) and slug
+        }
+
+        if matched_slugs and input_slug.casefold() in {slug.casefold() for slug in matched_slugs}:
+            if CHANNEL_CHAT_ID:
+                chat_info = type("Chat", (), {})()
+                chat_info.chat_id = CHANNEL_CHAT_ID
+                chat_info.title = "Канал"
+                chat_info.type = "chat"
+                chat_info.link = CHANNEL_LINK
+
+        if chat_info is None:
+            chat_info = await event.bot.get_chat_by_link(link=search_query)
     except Exception as error:
         if _is_chat_not_found_or_restricted(error):
             logger.warning(
@@ -305,20 +382,27 @@ async def _handle_harvest_link(
                 f"link={text}; query={search_query}; error={error}"
             )
             response_text = (
-                "❌ Объект не найден или доступ ограничен.\n\n"
-                "Проверьте ссылку или добавьте бота в этот чат/канал."
+                "❌ MAX API не смог определить ID по этой публичной ссылке.\n\n"
+                "Попробуйте один из надёжных способов:"
+                "\n• перешлите сообщение из канала или чата;"
+                "\n• добавьте бота в чат или канал;"
+                "\n• используйте «ID по сообщению»."
             )
-        else:
-            logger.error(
-                "Unexpected harvest link lookup error: "
-                f"link={text}; query={search_query}; error={error}",
-                exc_info=True,
+            await _send_feedback(
+                message,
+                response_text,
+                attachments=[id_harvest_keyboard()],
             )
-            response_text = (
-                "❌ Не удалось получить данные объекта из-за временной ошибки API."
-            )
-
-        await _send_feedback(message, response_text)
+            return True
+        logger.error(
+            "Unexpected harvest link lookup error: "
+            f"link={text}; query={search_query}; error={error}",
+            exc_info=True,
+        )
+        await _send_feedback(
+            message,
+            "❌ Не удалось получить данные объекта из-за временной ошибки API.",
+        )
         return True
 
     chat_id = _get_field(chat_info, 'chat_id', 'id')
