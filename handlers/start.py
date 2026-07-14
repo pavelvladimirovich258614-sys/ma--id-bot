@@ -5,6 +5,8 @@ import logging
 from maxapi.types import BotStarted, MessageCreated, Command
 from keyboards.main_menu import main_menu_keyboard, WELCOME_TEXT
 
+from middleware.subscription import require_subscription
+
 logger = logging.getLogger(__name__)
 
 
@@ -17,6 +19,7 @@ def register_start_handlers(dp):
     """
 
     @dp.bot_started()
+    @require_subscription
     async def on_bot_started(event: BotStarted):
         """
         Обработчик события bot_started.
@@ -36,6 +39,7 @@ def register_start_handlers(dp):
             logger.error(f"Error in bot_started handler: {e}", exc_info=True)
 
     @dp.message_created(Command('start'))
+    @require_subscription
     async def on_start_command(event: MessageCreated):
         """
         Обработчик команды /start.
@@ -63,6 +67,7 @@ def register_start_handlers(dp):
             )
 
     @dp.message_created(Command('help'))
+    @require_subscription
     async def on_help_command(event: MessageCreated):
         """
         Обработчик команды /help.

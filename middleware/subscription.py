@@ -14,11 +14,12 @@ from config import (
     BOT_TOKEN,
     CHANNEL_CHAT_ID,
     CHANNEL_ID,
+    ADMIN_USER_IDS,
     SUBSCRIPTION_TEXT,
 )
 from database.postgres_storage import get_admin_user_state, upsert_admin_user
 from database.storage import get_user, update_user
-from keyboards.subscription import subscription_keyboard
+from keyboards.subscription import subscription_keyboard, subscription_retry_keyboard
 
 
 logger = logging.getLogger(__name__)
@@ -34,9 +35,14 @@ PROTECTED_CALLBACK_PAYLOADS = {
 }
 
 
+class SubscriptionCheckError(Exception):
+    """Временная ошибка проверки подписки через MAX API."""
+    pass
+
+
 def require_subscription(handler_func: Callable[..., Awaitable[Any]]):
     """
-    Пропускает первый запрос пользователя и дальше проверяет подписку.
+    Проверяет подписку перед вызовом обработчика.
 
     Args:
         handler_func: Исходный async-обработчик.
@@ -51,6 +57,10 @@ def require_subscription(handler_func: Callable[..., Awaitable[Any]]):
             logger.warning("Не удалось определить пользователя для проверки подписки")
             return await handler_func(event, *args, **kwargs)
 
+        if user_id in ADMIN_USER_IDS:
+            logger.info("Subscription decision: True (admin bypass)")
+            return await handler_func(event, *args, **kwargs)
+
         admin_user = await get_admin_user_state(user_id)
         if admin_user and bool(admin_user.get("is_banned")):
             logger.warning("Пользователь заблокирован в админ-панели: %s", user_id)
@@ -62,17 +72,11 @@ def require_subscription(handler_func: Callable[..., Awaitable[Any]]):
             return None
 
         user = await get_user(user_id)
-        usage_count = int(user.get("usage_count") or 0)
         await upsert_admin_user(user_id)
         logger.info(
-            "Middleware entered: user_id=%s usage_count=%s",
+            "Middleware entered: user_id=%s",
             user_id,
-            usage_count
         )
-
-        if usage_count < 1:
-            await update_user(user_id, usage_count=usage_count + 1)
-            return await handler_func(event, *args, **kwargs)
 
         event_decision = _get_event_subscription_decision(user)
         if event_decision is True:
@@ -83,14 +87,12 @@ def require_subscription(handler_func: Callable[..., Awaitable[Any]]):
             )
             return await handler_func(event, *args, **kwargs)
 
-        if event_decision is False:
-            logger.info(
-                "Subscription event says user is not subscribed; "
-                "verifying via API"
-            )
-
+        retry_payload = (
+            getattr(getattr(event, "callback", None), "payload", None)
+            == "subscription_retry"
+        )
         cached_decision = _get_cached_subscription_decision(user)
-        if cached_decision is not None:
+        if cached_decision is not None and not retry_payload:
             logger.info(
                 "Subscription decision: %s (cached=%s)",
                 cached_decision,
@@ -99,11 +101,17 @@ def require_subscription(handler_func: Callable[..., Awaitable[Any]]):
             if cached_decision:
                 return await handler_func(event, *args, **kwargs)
 
-            await _send_subscription_message(event)
+            await _send_subscription_message(event, retry=False)
             await _answer_callback_if_needed(event)
             return None
 
-        is_subscribed = await _check_subscription(user_id)
+        try:
+            is_subscribed = await _check_subscription(user_id)
+        except SubscriptionCheckError:
+            await _send_unavailable_message(event)
+            await _answer_callback_if_needed(event)
+            return None
+
         await update_user(
             user_id,
             is_subscribed=1 if is_subscribed else 0,
@@ -115,7 +123,7 @@ def require_subscription(handler_func: Callable[..., Awaitable[Any]]):
         if is_subscribed:
             return await handler_func(event, *args, **kwargs)
 
-        await _send_subscription_message(event)
+        await _send_subscription_message(event, retry=retry_payload)
         await _answer_callback_if_needed(event)
         return None
 
@@ -152,11 +160,16 @@ def _is_protected_event(event: Any) -> bool:
 
     message = getattr(event, "message", None)
     body = getattr(message, "body", None)
-    if message is None or body is None:
-        return False
+    if message is not None and body is not None:
+        text = (getattr(body, "text", None) or "").strip()
+        if text.startswith("/start") or text.startswith("/help"):
+            return True
 
-    text = (getattr(body, "text", None) or "").strip()
-    if text.startswith("/start") or text.startswith("/help"):
+    if getattr(event, "from_user", None) is not None and getattr(event, "bot", None) is not None:
+        if getattr(event, "message", None) is None:
+            return True
+
+    if message is None or body is None:
         return False
 
     attachments = getattr(body, "attachments", None) or []
@@ -234,7 +247,11 @@ async def _check_subscription(user_id: int) -> bool:
     chat_id = CHANNEL_CHAT_ID if CHANNEL_CHAT_ID is not None else CHANNEL_ID
     url = f"{API_BASE}/chats/{chat_id}/members"
     headers = {"Authorization": BOT_TOKEN}
-    logger.info("Checking subscription: user_id=%s, url=%s", user_id, url)
+    logger.info("Checking subscription: user_id=%s", user_id)
+
+    chat_id = CHANNEL_CHAT_ID if CHANNEL_CHAT_ID is not None else CHANNEL_ID
+    url = f"{API_BASE}/chats/{chat_id}/members"
+    headers = {"Authorization": BOT_TOKEN}
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -245,7 +262,6 @@ async def _check_subscription(user_id: int) -> bool:
             )
 
         logger.info("Members API status: %s", resp.status_code)
-        logger.info("Members API body preview: %s", str(resp.text)[:500])
 
         if resp.status_code == 200:
             data = resp.json()
@@ -257,63 +273,16 @@ async def _check_subscription(user_id: int) -> bool:
             )
             return decision
 
-        if resp.status_code in (403, 404):
-            logger.error(
-                "Subscription API error: %s. Bot may not be admin in channel "
-                "or channel ID is wrong.",
-                resp.status_code
-            )
-            logger.info(
-                "Subscription decision: %s (cached=%s)",
-                False,
-                False
-            )
-            return False
-
-        if resp.status_code == 429:
-            logger.warning("Rate limit")
-            logger.info(
-                "Subscription decision: %s (cached=%s)",
-                True,
-                False
-            )
-            return True
-
-        if 500 <= resp.status_code <= 599:
-            logger.warning("API unreachable")
-            logger.info(
-                "Subscription decision: %s (cached=%s)",
-                True,
-                False
-            )
-            return True
-
-        logger.error("Subscription API unexpected status: %s", resp.status_code)
-        logger.info(
-            "Subscription decision: %s (cached=%s)",
-            False,
-            False
-        )
-        return False
+        logger.warning("Members API error: %s", resp.status_code)
+        raise SubscriptionCheckError(f"Members API error: {resp.status_code}")
+    except SubscriptionCheckError:
+        raise
     except httpx.TimeoutException:
-        logger.warning("API unreachable")
-        logger.info(
-            "Subscription decision: %s (cached=%s)",
-            True,
-            False
-        )
-        return True
+        logger.warning("Members API timeout")
+        raise SubscriptionCheckError("Members API timeout")
     except Exception:
-        logger.exception("Subscription check failed")
-        logger.warning(
-            "API unreachable"
-        )
-        logger.info(
-            "Subscription decision: %s (cached=%s)",
-            True,
-            False
-        )
-        return True
+        logger.warning("Members API unavailable")
+        raise SubscriptionCheckError("Members API unavailable")
 
 
 def _members_include_user(data: Any, user_id: int) -> bool:
@@ -377,13 +346,13 @@ def _member_user_id(member: Any) -> int | None:
         return None
 
 
-async def _send_subscription_message(event: Any) -> None:
+async def _send_subscription_message(event: Any, retry: bool = False) -> None:
     """Отправляет пользователю сообщение с кнопкой подписки."""
-    keyboard = subscription_keyboard()
+    keyboard = subscription_retry_keyboard() if retry else subscription_keyboard()
     attachments = [keyboard] if keyboard is not None else None
     message = getattr(event, "message", None)
 
-    if message is not None and hasattr(message, "answer"):
+    if message is not None and callable(getattr(message, "answer", None)):
         await message.answer(
             text=SUBSCRIPTION_TEXT,
             parse_mode=ParseMode.HTML,
@@ -400,6 +369,35 @@ async def _send_subscription_message(event: Any) -> None:
     await bot.send_message(
         chat_id=chat_id,
         text=SUBSCRIPTION_TEXT,
+        parse_mode=ParseMode.HTML,
+        attachments=attachments
+    )
+
+
+async def _send_unavailable_message(event: Any) -> None:
+    """Сообщает, что проверка подписки временно недоступна."""
+    keyboard = subscription_retry_keyboard()
+    attachments = [keyboard] if keyboard is not None else None
+    text = "Не удалось проверить подписку. Попробуйте ещё раз через несколько секунд."
+    message = getattr(event, "message", None)
+
+    if message is not None and callable(getattr(message, "answer", None)):
+        await message.answer(
+            text=text,
+            parse_mode=ParseMode.HTML,
+            attachments=attachments
+        )
+        return
+
+    chat_id = _extract_chat_id(event)
+    bot = getattr(event, "bot", None)
+    if chat_id is None or bot is None:
+        logger.warning("Не удалось отправить сообщение о недоступности проверки")
+        return
+
+    await bot.send_message(
+        chat_id=chat_id,
+        text=text,
         parse_mode=ParseMode.HTML,
         attachments=attachments
     )

@@ -315,6 +315,11 @@ def register_callback_handlers(dp):
                 response_keyboard = main_menu_keyboard()
                 text = WELCOME_TEXT
 
+            elif payload == "subscription_retry":
+                clear_harvest_state(user.user_id)
+                response_keyboard = main_menu_keyboard()
+                text = WELCOME_TEXT
+
             else:
                 logger.warning(f"Unknown callback payload: {payload}")
                 text = (

@@ -11,12 +11,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Настройка уровня логирования
-LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
 # Настройка логирования
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 
 logger = logging.getLogger(__name__)
@@ -32,6 +32,22 @@ def _parse_optional_int(value, name):
     except ValueError:
         logger.warning(f"{name} должен быть числом, получено: {value}")
         return None
+
+
+def _parse_admin_user_ids(value):
+    """Парсит список ID администраторов из окружения в множество int."""
+    if not value:
+        return set()
+
+    ids = set()
+    for part in str(value).replace(",", " ").split():
+        try:
+            ids.add(int(part))
+        except ValueError:
+            logger.warning(
+                "ADMIN_USER_IDS содержит нечисловое значение: %s", part
+            )
+    return ids
 
 
 # Загрузка токена из переменной окружения
@@ -50,6 +66,7 @@ SUBSCRIPTION_TEXT = os.getenv(
     "После подписки нажмите /start"
 )
 API_BASE = os.getenv("API_BASE", "https://platform-api2.max.ru")
+ADMIN_USER_IDS = _parse_admin_user_ids(os.getenv("ADMIN_USER_IDS", ""))
 
 if not BOT_TOKEN:
     print("ERROR: BOT_TOKEN не найден в переменных окружения!")
