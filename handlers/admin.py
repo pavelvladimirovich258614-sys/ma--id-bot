@@ -6,7 +6,7 @@ import logging
 import time
 from typing import Any
 
-from maxapi.types import MessageCreated, MessageCallback
+from maxapi.types import Command, MessageCreated, MessageCallback
 from maxapi.enums.parse_mode import ParseMode, TextFormat
 
 from config import ADMIN_USER_IDS, BROADCAST_LIVE_ENABLED
