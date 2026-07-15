@@ -381,6 +381,21 @@ class SubscriptionGateTests(unittest.TestCase):
             self.assertEqual(result, SubscriptionAccess.UNAVAILABLE)
 
 
+    def test_retry_subscribed_returns_main_menu(self):
+        with open("/opt/ma--id-bot/handlers/callbacks.py", "r", encoding="utf-8") as f:
+            source = f.read()
+
+        retry_branch = "elif payload == \"subscription_retry\":"
+        branch_index = source.find(retry_branch)
+        self.assertNotEqual(branch_index, -1, "subscription_retry branch not found")
+
+        branch_end = source.find("else:", branch_index)
+        branch_source = source[branch_index:branch_end]
+
+        self.assertIn("main_menu_keyboard()", branch_source)
+        self.assertIn("WELCOME_TEXT", branch_source)
+        self.assertNotIn("subscription_retry_keyboard", branch_source)
+        self.assertNotIn("SUBSCRIPTION_TEXT", branch_source)
 class ConfigTests(unittest.TestCase):
     def test_channel_link_configured(self):
         self.assertTrue(CHANNEL_LINK)
