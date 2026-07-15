@@ -73,3 +73,14 @@ if not BOT_TOKEN:
     print("ERROR: BOT_TOKEN не найден в переменных окружения!")
     print("Создайте файл .env с переменной BOT_TOKEN=ваш_токен")
     sys.exit(1)
+
+
+# Admin panel constants
+BROADCAST_RATE_LIMIT = 10
+BROADCAST_MAX_RETRIES = 3
+BROADCAST_RETRY_BACKOFF_BASE = 1
+BROADCAST_RETRY_BACKOFF_MAX = 60
+BROADCAST_PROGRESS_UPDATE_INTERVAL = 5
+BROADCAST_PROGRESS_UPDATE_EVERY = 25
+
+BROADCAST_LIVE_ENABLED = os.getenv("BROADCAST_LIVE_ENABLED", "false").lower() == "true"

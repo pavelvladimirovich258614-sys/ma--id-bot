@@ -7,7 +7,7 @@ from typing import Any
 import aiosqlite
 
 
-DB_PATH = os.path.join(
+DB_PATH = os.environ.get("MAXIDBOT_DB_PATH") or os.path.join(
     os.path.dirname(os.path.dirname(__file__)),
     "users.sqlite3"
 )
