@@ -62,8 +62,9 @@ CHANNEL_CHAT_ID = _parse_optional_int(
 CHANNEL_LINK = os.getenv("CHANNEL_LINK", "https://max.ru/id752703975446_biz")
 SUBSCRIPTION_TEXT = os.getenv(
     "SUBSCRIPTION_TEXT",
-    "Чтобы продолжить пользоваться ботом, подпишитесь на канал. "
-    "После подписки нажмите /start"
+    "❌ Извините, вы не подписаны на канал.\n\n"
+    "Чтобы пользоваться ботом, пожалуйста, подпишитесь на канал "
+    "и после этого нажмите «Проверить подписку»."
 )
 API_BASE = os.getenv("API_BASE", "https://platform-api2.max.ru")
 ADMIN_USER_IDS = _parse_admin_user_ids(os.getenv("ADMIN_USER_IDS", ""))

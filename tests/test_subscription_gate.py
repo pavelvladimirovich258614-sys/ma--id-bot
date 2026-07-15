@@ -1,6 +1,3 @@
-"""
-Минимальные тесты проверки шлюза подписки.
-"""
 import asyncio
 import logging
 import sys
@@ -14,7 +11,13 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from config import ADMIN_USER_IDS, CHANNEL_CHAT_ID, CHANNEL_LINK
-from middleware.subscription import SubscriptionCheckError
+import httpx
+from middleware.subscription import (
+    SubscriptionAccess,
+    SubscriptionCheckError,
+    check_subscription_access,
+    require_subscription,
+)
 
 
 class SubscriptionGateTests(unittest.TestCase):
@@ -24,21 +27,15 @@ class SubscriptionGateTests(unittest.TestCase):
 
     def _fake_event(self, user_id, payload=None, text=None):
         user = types.SimpleNamespace(user_id=user_id)
-        callback = types.SimpleNamespace(
-            user=user,
-            callback_id="callback_id",
-            payload=payload,
-        )
-        event = types.SimpleNamespace(
-            user_id=user_id,
-            from_user=user,
-            callback=callback,
-            chat_id=123,
-            bot=types.SimpleNamespace(
+        event_kwargs = {
+            "user_id": user_id,
+            "from_user": user,
+            "chat_id": 123,
+            "bot": types.SimpleNamespace(
                 send_message=lambda **kwargs: asyncio.sleep(0),
                 send_callback=lambda **kwargs: asyncio.sleep(0),
             ),
-            message=types.SimpleNamespace(
+            "message": types.SimpleNamespace(
                 recipient=types.SimpleNamespace(chat_id=123),
                 body=types.SimpleNamespace(
                     text=text or "",
@@ -48,427 +45,340 @@ class SubscriptionGateTests(unittest.TestCase):
                 answer=lambda **kwargs: asyncio.sleep(0),
                 edit=None,
             ),
-        )
-        return event
+        }
+        if payload is not None:
+            event_kwargs["callback"] = types.SimpleNamespace(
+                user=user,
+                callback_id="callback_id",
+                payload=payload,
+            )
+        return types.SimpleNamespace(**event_kwargs)
+
+    def _async_result(self, value):
+        async def _coro(*args, **kwargs):
+            return value
+        return _coro
+
+    def _fake_get_user(self, user_id):
+        return {}
 
     def test_admin_bypass_without_http(self):
-        import middleware.subscription as subscription
-
-        async def fake_get_user(user_id):
-            return {}
-
-        with mock.patch.object(subscription, "get_user", fake_get_user), \
-             mock.patch.object(subscription, "_check_subscription", self._async_false), \
-             mock.patch.object(subscription, "update_user"), \
-             mock.patch.object(subscription, "upsert_admin_user"):
+        with mock.patch("middleware.subscription.get_user", self._fake_get_user), \
+             mock.patch("middleware.subscription.check_subscription_access", self._async_result(SubscriptionAccess.ADMIN)), \
+             mock.patch("middleware.subscription.update_user"), \
+             mock.patch("middleware.subscription.upsert_admin_user"):
             called = []
 
             async def fake_handler(event, *args, **kwargs):
                 called.append((event, args, kwargs))
                 return "admin_ok"
 
-            wrapped = subscription.require_subscription(fake_handler)
+            wrapped = require_subscription(fake_handler)
             event = self._fake_event(73412011, payload="get_user_id")
             result = asyncio.run(wrapped(event))
             self.assertEqual(result, "admin_ok")
-            self.assertTrue(called)
-
-    def test_regular_user_first_request_not_free(self):
-        import middleware.subscription as subscription
-
-        async def fake_get_user(user_id):
-            return {}
-
-        with mock.patch.object(subscription, "get_user", fake_get_user), \
-             mock.patch.object(subscription, "_check_subscription", self._async_false), \
-             mock.patch.object(subscription, "update_user"), \
-             mock.patch.object(subscription, "upsert_admin_user"):
-            sent = []
-
-            async def fake_send(event, retry=False):
-                sent.append((event, retry))
-
-            with mock.patch.object(subscription, "_send_subscription_message", fake_send):
-                async def fake_handler(event, *args, **kwargs):
-                    return "protected"
-
-                wrapped = subscription.require_subscription(fake_handler)
-                event = self._fake_event(111, payload="get_user_id", text="hello")
-                result = asyncio.run(wrapped(event))
-                self.assertIsNone(result)
-                self.assertEqual(sent, [(event, False)])
+            self.assertEqual(called, [(event, (), {})])
 
     def test_subscribed_user_has_access(self):
-        import middleware.subscription as subscription
-
-        async def fake_get_user(user_id):
-            return {}
-
-        with mock.patch.object(subscription, "get_user", fake_get_user), \
-             mock.patch.object(subscription, "_check_subscription", self._async_true), \
-             mock.patch.object(subscription, "update_user"), \
-             mock.patch.object(subscription, "upsert_admin_user"):
+        with mock.patch("middleware.subscription.get_user", self._fake_get_user), \
+             mock.patch("middleware.subscription.check_subscription_access", self._async_result(SubscriptionAccess.SUBSCRIBED)), \
+             mock.patch("middleware.subscription.update_user") as update_user, \
+             mock.patch("middleware.subscription.upsert_admin_user"):
             called = []
 
             async def fake_handler(event, *args, **kwargs):
                 called.append(event)
                 return "ok"
 
-            wrapped = subscription.require_subscription(fake_handler)
+            wrapped = require_subscription(fake_handler)
             event = self._fake_event(222, payload="get_user_id")
             result = asyncio.run(wrapped(event))
             self.assertEqual(result, "ok")
             self.assertEqual(called, [event])
+            update_user.assert_called_once()
+            _, kwargs = update_user.call_args
+            self.assertEqual(kwargs["is_subscribed"], 1)
 
-    def test_http_401_blocks_access(self):
-        import middleware.subscription as subscription
-
-        async def fake_get_user(user_id):
-            return {}
-
-        with mock.patch.object(subscription, "get_user", fake_get_user), \
-             mock.patch.object(subscription, "update_user"), \
-             mock.patch.object(subscription, "upsert_admin_user"):
-            sent_unavailable = []
-
-            async def fake_unavailable(event):
-                sent_unavailable.append(event)
-
-            async def fake_check(user_id):
-                raise SubscriptionCheckError("401")
-
-            with mock.patch.object(subscription, "_send_unavailable_message", fake_unavailable), \
-                 mock.patch.object(subscription, "_check_subscription", fake_check):
+    def test_unsubscribed_user_gets_gate_message(self):
+        with mock.patch("middleware.subscription.get_user", self._fake_get_user), \
+             mock.patch("middleware.subscription.check_subscription_access", self._async_result(SubscriptionAccess.NOT_SUBSCRIBED)), \
+             mock.patch("middleware.subscription.update_user") as update_user, \
+             mock.patch("middleware.subscription.upsert_admin_user"), \
+             mock.patch("middleware.subscription._send_subscription_message") as send_sub, \
+             mock.patch("middleware.subscription._answer_callback_if_needed") as answer_cb:
                 async def fake_handler(event, *args, **kwargs):
                     return "protected"
 
-                wrapped = subscription.require_subscription(fake_handler)
+                wrapped = require_subscription(fake_handler)
                 event = self._fake_event(333, payload="get_user_id")
                 result = asyncio.run(wrapped(event))
                 self.assertIsNone(result)
-                self.assertEqual(sent_unavailable, [event])
+                send_sub.assert_called_once_with(event, retry=False)
+                answer_cb.assert_called_once_with(event)
+                update_user.assert_called_once()
+                _, kwargs = update_user.call_args
+                self.assertEqual(kwargs["is_subscribed"], 0)
 
-    def test_http_403_blocks_access(self):
-        import middleware.subscription as subscription
-
-        async def fake_get_user(user_id):
-            return {}
-
-        with mock.patch.object(subscription, "get_user", fake_get_user), \
-             mock.patch.object(subscription, "update_user"), \
-             mock.patch.object(subscription, "upsert_admin_user"):
-            sent_unavailable = []
-
-            async def fake_unavailable(event):
-                sent_unavailable.append(event)
-
+    def _assert_unavailable(self, status):
+        with mock.patch("middleware.subscription.get_user", self._fake_get_user), \
+             mock.patch("middleware.subscription.update_user") as update_user, \
+             mock.patch("middleware.subscription.upsert_admin_user"), \
+             mock.patch("middleware.subscription._send_unavailable_message") as send_unavail, \
+             mock.patch("middleware.subscription._answer_callback_if_needed") as answer_cb:
             async def fake_check(user_id):
-                raise SubscriptionCheckError("403")
+                return status
 
-            with mock.patch.object(subscription, "_send_unavailable_message", fake_unavailable), \
-                 mock.patch.object(subscription, "_check_subscription", fake_check):
+            with mock.patch("middleware.subscription.check_subscription_access", fake_check):
                 async def fake_handler(event, *args, **kwargs):
                     return "protected"
 
-                wrapped = subscription.require_subscription(fake_handler)
-                event = self._fake_event(334, payload="get_user_id")
+                wrapped = require_subscription(fake_handler)
+                event = self._fake_event(444, payload="get_user_id")
                 result = asyncio.run(wrapped(event))
                 self.assertIsNone(result)
-                self.assertEqual(sent_unavailable, [event])
+                send_unavail.assert_called_once_with(event)
+                answer_cb.assert_called_once_with(event)
+                update_user.assert_not_called()
 
-    def test_http_404_blocks_access(self):
-        import middleware.subscription as subscription
+    def test_http_401_returns_unavailable(self):
+        self._assert_unavailable(SubscriptionAccess.UNAVAILABLE)
 
-        async def fake_get_user(user_id):
-            return {}
+    def test_http_403_returns_unavailable(self):
+        self._assert_unavailable(SubscriptionAccess.UNAVAILABLE)
 
-        with mock.patch.object(subscription, "get_user", fake_get_user), \
-             mock.patch.object(subscription, "update_user"), \
-             mock.patch.object(subscription, "upsert_admin_user"):
-            sent_unavailable = []
+    def test_http_404_returns_unavailable(self):
+        self._assert_unavailable(SubscriptionAccess.UNAVAILABLE)
 
-            async def fake_unavailable(event):
-                sent_unavailable.append(event)
+    def test_http_429_returns_unavailable(self):
+        self._assert_unavailable(SubscriptionAccess.UNAVAILABLE)
 
-            async def fake_check(user_id):
-                raise SubscriptionCheckError("404")
+    def test_http_500_returns_unavailable(self):
+        self._assert_unavailable(SubscriptionAccess.UNAVAILABLE)
 
-            with mock.patch.object(subscription, "_send_unavailable_message", fake_unavailable), \
-                 mock.patch.object(subscription, "_check_subscription", fake_check):
-                async def fake_handler(event, *args, **kwargs):
-                    return "protected"
+    def test_timeout_returns_unavailable(self):
+        self._assert_unavailable(SubscriptionCheckError("timeout"))
 
-                wrapped = subscription.require_subscription(fake_handler)
-                event = self._fake_event(335, payload="get_user_id")
-                result = asyncio.run(wrapped(event))
-                self.assertIsNone(result)
-                self.assertEqual(sent_unavailable, [event])
+    def test_network_exception_returns_unavailable(self):
+        self._assert_unavailable(SubscriptionCheckError("network"))
 
-    def test_http_429_blocks_access(self):
-        import middleware.subscription as subscription
+    def test_invalid_json_returns_unavailable(self):
+        self._assert_unavailable(SubscriptionCheckError("invalid json"))
 
-        async def fake_get_user(user_id):
-            return {}
-
-        with mock.patch.object(subscription, "get_user", fake_get_user), \
-             mock.patch.object(subscription, "update_user"), \
-             mock.patch.object(subscription, "upsert_admin_user"):
-            sent_unavailable = []
-
-            async def fake_unavailable(event):
-                sent_unavailable.append(event)
-
-            async def fake_check(user_id):
-                raise SubscriptionCheckError("429")
-
-            with mock.patch.object(subscription, "_send_unavailable_message", fake_unavailable), \
-                 mock.patch.object(subscription, "_check_subscription", fake_check):
-                async def fake_handler(event, *args, **kwargs):
-                    return "protected"
-
-                wrapped = subscription.require_subscription(fake_handler)
-                event = self._fake_event(336, payload="get_user_id")
-                result = asyncio.run(wrapped(event))
-                self.assertIsNone(result)
-                self.assertEqual(sent_unavailable, [event])
-
-    def test_http_500_blocks_access(self):
-        import middleware.subscription as subscription
-
-        async def fake_get_user(user_id):
-            return {}
-
-        with mock.patch.object(subscription, "get_user", fake_get_user), \
-             mock.patch.object(subscription, "update_user"), \
-             mock.patch.object(subscription, "upsert_admin_user"):
-            sent_unavailable = []
-
-            async def fake_unavailable(event):
-                sent_unavailable.append(event)
-
-            async def fake_check(user_id):
-                raise SubscriptionCheckError("500")
-
-            with mock.patch.object(subscription, "_send_unavailable_message", fake_unavailable), \
-                 mock.patch.object(subscription, "_check_subscription", fake_check):
-                async def fake_handler(event, *args, **kwargs):
-                    return "protected"
-
-                wrapped = subscription.require_subscription(fake_handler)
-                event = self._fake_event(337, payload="get_user_id")
-                result = asyncio.run(wrapped(event))
-                self.assertIsNone(result)
-                self.assertEqual(sent_unavailable, [event])
-
-    def test_timeout_blocks_access(self):
-        import middleware.subscription as subscription
-
-        async def fake_get_user(user_id):
-            return {}
-
-        with mock.patch.object(subscription, "get_user", fake_get_user), \
-             mock.patch.object(subscription, "update_user"), \
-             mock.patch.object(subscription, "upsert_admin_user"):
-            sent_unavailable = []
-
-            async def fake_unavailable(event):
-                sent_unavailable.append(event)
-
-            async def fake_check(user_id):
-                raise SubscriptionCheckError("timeout")
-
-            with mock.patch.object(subscription, "_send_unavailable_message", fake_unavailable), \
-                 mock.patch.object(subscription, "_check_subscription", fake_check):
-                async def fake_handler(event, *args, **kwargs):
-                    return "protected"
-
-                wrapped = subscription.require_subscription(fake_handler)
-                event = self._fake_event(338, payload="get_user_id")
-                result = asyncio.run(wrapped(event))
-                self.assertIsNone(result)
-                self.assertEqual(sent_unavailable, [event])
-
-    def test_network_exception_blocks_access(self):
-        import middleware.subscription as subscription
-
-        async def fake_get_user(user_id):
-            return {}
-
-        with mock.patch.object(subscription, "get_user", fake_get_user), \
-             mock.patch.object(subscription, "update_user"), \
-             mock.patch.object(subscription, "upsert_admin_user"):
-            sent_unavailable = []
-
-            async def fake_unavailable(event):
-                sent_unavailable.append(event)
-
-            async def fake_check(user_id):
-                raise SubscriptionCheckError("network")
-
-            with mock.patch.object(subscription, "_send_unavailable_message", fake_unavailable), \
-                 mock.patch.object(subscription, "_check_subscription", fake_check):
-                async def fake_handler(event, *args, **kwargs):
-                    return "protected"
-
-                wrapped = subscription.require_subscription(fake_handler)
-                event = self._fake_event(339, payload="get_user_id")
-                result = asyncio.run(wrapped(event))
-                self.assertIsNone(result)
-                self.assertEqual(sent_unavailable, [event])
-
-    def test_invalid_json_blocks_access(self):
-        import middleware.subscription as subscription
-
-        async def fake_get_user(user_id):
-            return {}
-
-        with mock.patch.object(subscription, "get_user", fake_get_user), \
-             mock.patch.object(subscription, "update_user"), \
-             mock.patch.object(subscription, "upsert_admin_user"):
-            sent_unavailable = []
-
-            async def fake_unavailable(event):
-                sent_unavailable.append(event)
-
-            async def fake_check(user_id):
-                raise SubscriptionCheckError("invalid json")
-
-            with mock.patch.object(subscription, "_send_unavailable_message", fake_unavailable), \
-                 mock.patch.object(subscription, "_check_subscription", fake_check):
-                async def fake_handler(event, *args, **kwargs):
-                    return "protected"
-
-                wrapped = subscription.require_subscription(fake_handler)
-                event = self._fake_event(340, payload="get_user_id")
-                result = asyncio.run(wrapped(event))
-                self.assertIsNone(result)
-                self.assertEqual(sent_unavailable, [event])
-
-    def test_retry_callback_skips_negative_cache(self):
-        import middleware.subscription as subscription
-
-        user = {
-            "is_subscribed": 0,
-            "last_check": "2099-01-01T00:00:00",
-            "subscription_source": "api",
-        }
-        async def fake_get_user(user_id):
-            return user
-
-        with mock.patch.object(subscription, "get_user", fake_get_user), \
-             mock.patch.object(subscription, "_check_subscription", self._async_true), \
-             mock.patch.object(subscription, "update_user"), \
-             mock.patch.object(subscription, "upsert_admin_user"):
-            sent = []
-
-            async def fake_send(event, retry=False):
-                sent.append((event, retry))
-
-            with mock.patch.object(subscription, "_send_subscription_message", fake_send):
-                called = []
-
-                async def fake_handler(event, *args, **kwargs):
-                    called.append(event)
-                    return "ok"
-
-                wrapped = subscription.require_subscription(fake_handler)
-                event = self._fake_event(444, payload="subscription_retry")
-                result = asyncio.run(wrapped(event))
-                self.assertEqual(result, "ok")
-                self.assertEqual(called, [event])
-
-    def test_retry_callback_after_success_opens_main_menu(self):
-        import middleware.subscription as subscription
-
-        user = {
-            "is_subscribed": 1,
-            "last_check": "2099-01-01T00:00:00",
-            "subscription_source": "api",
-        }
-        async def fake_get_user(user_id):
-            return user
-
-        with mock.patch.object(subscription, "get_user", fake_get_user), \
-             mock.patch.object(subscription, "_check_subscription", self._async_true):
+    def test_retry_callback_after_subscribe_opens_menu(self):
+        with mock.patch("middleware.subscription.get_user", self._fake_get_user), \
+             mock.patch("middleware.subscription.check_subscription_access", self._async_result(SubscriptionAccess.SUBSCRIBED)), \
+             mock.patch("middleware.subscription.update_user"), \
+             mock.patch("middleware.subscription.upsert_admin_user"):
             called = []
 
             async def fake_handler(event, *args, **kwargs):
                 called.append(event)
                 return "main_menu"
 
-            wrapped = subscription.require_subscription(fake_handler)
+            wrapped = require_subscription(fake_handler)
             event = self._fake_event(445, payload="subscription_retry")
             result = asyncio.run(wrapped(event))
             self.assertEqual(result, "main_menu")
             self.assertEqual(called, [event])
 
-    def test_non_subscribed_user_gets_two_buttons(self):
-        import middleware.subscription as subscription
-        import keyboards.subscription as keyboards
+    def test_positive_db_status_does_not_grant_access(self):
+        user = {
+            "user_id": 555,
+            "usage_count": 1,
+            "is_subscribed": 1,
+            "last_check": "2099-01-01T00:00:00",
+            "subscription_source": "api",
+        }
 
         async def fake_get_user(user_id):
-            return {}
+            return user
 
-        with mock.patch.object(subscription, "get_user", fake_get_user), \
-             mock.patch.object(subscription, "_check_subscription", self._async_false), \
-             mock.patch.object(subscription, "update_user"), \
-             mock.patch.object(subscription, "upsert_admin_user"):
-            sent = []
+        with mock.patch("middleware.subscription.get_user", fake_get_user), \
+             mock.patch("middleware.subscription.check_subscription_access", self._async_result(SubscriptionAccess.NOT_SUBSCRIBED)), \
+             mock.patch("middleware.subscription.update_user") as update_user, \
+             mock.patch("middleware.subscription.upsert_admin_user"), \
+             mock.patch("middleware.subscription._send_subscription_message") as send_sub:
+            async def fake_handler(event, *args, **kwargs):
+                return "protected"
 
-            async def fake_send(event, retry=False):
-                sent.append((event, retry))
+            wrapped = require_subscription(fake_handler)
+            event = self._fake_event(555, payload="get_user_id")
+            result = asyncio.run(wrapped(event))
+            self.assertIsNone(result)
+            send_sub.assert_called_once_with(event, retry=False)
+            update_user.assert_called_once()
+            _, kwargs = update_user.call_args
+            self.assertEqual(kwargs["is_subscribed"], 0)
 
-            with mock.patch.object(subscription, "_send_subscription_message", fake_send):
+    def test_harvest_payloads_are_protected(self):
+        for payload in [
+            "harvest_menu",
+            "harvest_bot_id",
+            "harvest_by_link",
+            "harvest_by_message",
+            "harvest_back",
+        ]:
+            with mock.patch("middleware.subscription.get_user", self._fake_get_user), \
+                 mock.patch("middleware.subscription.check_subscription_access", self._async_result(SubscriptionAccess.NOT_SUBSCRIBED)), \
+                 mock.patch("middleware.subscription.update_user"), \
+                 mock.patch("middleware.subscription.upsert_admin_user"), \
+                 mock.patch("middleware.subscription._send_subscription_message") as send_sub:
                 async def fake_handler(event, *args, **kwargs):
                     return "protected"
 
-                wrapped = subscription.require_subscription(fake_handler)
-                event = self._fake_event(555, payload="get_user_id")
+                wrapped = require_subscription(fake_handler)
+                event = self._fake_event(666, payload=payload)
                 result = asyncio.run(wrapped(event))
                 self.assertIsNone(result)
-                self.assertEqual(sent, [(event, False)])
-                keyboard = keyboards.subscription_keyboard()
-                self.assertIsNotNone(keyboard)
+                send_sub.assert_called_once_with(event, retry=False)
 
-    def test_response_body_not_logged(self):
-        import middleware.subscription as subscription
+    def test_bot_started_blocks_unsubscribed(self):
+        event = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(user_id=777),
+            bot=types.SimpleNamespace(
+                send_message=lambda **kwargs: asyncio.sleep(0),
+                send_callback=lambda **kwargs: asyncio.sleep(0),
+            ),
+            chat_id=123,
+            message=None,
+            callback=None,
+        )
+        with mock.patch("middleware.subscription.get_user", self._fake_get_user), \
+             mock.patch("middleware.subscription.check_subscription_access", self._async_result(SubscriptionAccess.NOT_SUBSCRIBED)), \
+             mock.patch("middleware.subscription.update_user"), \
+             mock.patch("middleware.subscription.upsert_admin_user"), \
+             mock.patch("middleware.subscription._send_subscription_message") as send_sub:
+            async def fake_handler(event, *args, **kwargs):
+                return "protected"
 
-        logged = []
+            wrapped = require_subscription(fake_handler)
+            result = asyncio.run(wrapped(event))
+            self.assertIsNone(result)
+            send_sub.assert_called_once_with(event, retry=False)
 
-        class FakeLogHandler(logging.Handler):
-            def emit(self, record):
-                logged.append(self.format(record))
+    def test_start_command_blocks_unsubscribed(self):
+        event = self._fake_event(888, text="/start")
+        with mock.patch("middleware.subscription.get_user", self._fake_get_user), \
+             mock.patch("middleware.subscription.check_subscription_access", self._async_result(SubscriptionAccess.NOT_SUBSCRIBED)), \
+             mock.patch("middleware.subscription.update_user"), \
+             mock.patch("middleware.subscription.upsert_admin_user"), \
+             mock.patch("middleware.subscription._send_subscription_message") as send_sub:
+            async def fake_handler(event, *args, **kwargs):
+                return "protected"
 
-        async def fake_check(user_id):
-            subscription.logger.info("Checking subscription: user_id=%s", user_id)
-            return True
+            wrapped = require_subscription(fake_handler)
+            result = asyncio.run(wrapped(event))
+            self.assertIsNone(result)
+            send_sub.assert_called_once_with(event, retry=False)
 
-        with mock.patch.object(subscription, "_check_subscription", fake_check):
-            handler = FakeLogHandler()
-            handler.setLevel(logging.INFO)
-            subscription.logger.addHandler(handler)
-            subscription.logger.setLevel(logging.INFO)
+    def test_help_command_blocks_unsubscribed(self):
+        event = self._fake_event(889, text="/help")
+        with mock.patch("middleware.subscription.get_user", self._fake_get_user), \
+             mock.patch("middleware.subscription.check_subscription_access", self._async_result(SubscriptionAccess.NOT_SUBSCRIBED)), \
+             mock.patch("middleware.subscription.update_user"), \
+             mock.patch("middleware.subscription.upsert_admin_user"), \
+             mock.patch("middleware.subscription._send_subscription_message") as send_sub:
+            async def fake_handler(event, *args, **kwargs):
+                return "protected"
 
-            try:
-                result = asyncio.run(subscription._check_subscription(999))
-                self.assertTrue(result)
-            finally:
-                subscription.logger.removeHandler(handler)
+            wrapped = require_subscription(fake_handler)
+            result = asyncio.run(wrapped(event))
+            self.assertIsNone(result)
+            send_sub.assert_called_once_with(event, retry=False)
 
-        self.assertTrue(any("Checking subscription" in message for message in logged))
-        self.assertTrue(all("secret" not in message for message in logged))
+    def test_ordinary_callback_after_refusal_not_executed(self):
+        with mock.patch("middleware.subscription.get_user", self._fake_get_user), \
+             mock.patch("middleware.subscription.check_subscription_access", self._async_result(SubscriptionAccess.NOT_SUBSCRIBED)), \
+             mock.patch("middleware.subscription.update_user"), \
+             mock.patch("middleware.subscription.upsert_admin_user"), \
+             mock.patch("middleware.subscription._send_subscription_message") as send_sub:
+            called = []
 
-    @staticmethod
-    def _async_true(user_id):
-        async def _coro():
-            return True
-        return _coro()
+            async def fake_handler(event, *args, **kwargs):
+                called.append(event)
+                return "protected"
 
-    @staticmethod
-    def _async_false(user_id):
-        async def _coro():
-            return False
-        return _coro()
+            wrapped = require_subscription(fake_handler)
+            event = self._fake_event(999, payload="get_chat_id")
+            result = asyncio.run(wrapped(event))
+            self.assertIsNone(result)
+            self.assertEqual(called, [])
+            send_sub.assert_called_once_with(event, retry=False)
+
+    def test_harvest_menu_after_refusal_not_executed(self):
+        with mock.patch("middleware.subscription.get_user", self._fake_get_user), \
+             mock.patch("middleware.subscription.check_subscription_access", self._async_result(SubscriptionAccess.NOT_SUBSCRIBED)), \
+             mock.patch("middleware.subscription.update_user"), \
+             mock.patch("middleware.subscription.upsert_admin_user"), \
+             mock.patch("middleware.subscription._send_subscription_message") as send_sub:
+            called = []
+
+            async def fake_handler(event, *args, **kwargs):
+                called.append(event)
+                return "protected"
+
+            wrapped = require_subscription(fake_handler)
+            event = self._fake_event(1001, payload="harvest_menu")
+            result = asyncio.run(wrapped(event))
+            self.assertIsNone(result)
+            self.assertEqual(called, [])
+            send_sub.assert_called_once_with(event, retry=False)
+
+    def test_harvest_by_link_after_refusal_not_executed(self):
+        with mock.patch("middleware.subscription.get_user", self._fake_get_user), \
+             mock.patch("middleware.subscription.check_subscription_access", self._async_result(SubscriptionAccess.NOT_SUBSCRIBED)), \
+             mock.patch("middleware.subscription.update_user"), \
+             mock.patch("middleware.subscription.upsert_admin_user"), \
+             mock.patch("middleware.subscription._send_subscription_message") as send_sub:
+            called = []
+
+            async def fake_handler(event, *args, **kwargs):
+                called.append(event)
+                return "protected"
+
+            wrapped = require_subscription(fake_handler)
+            event = self._fake_event(1002, payload="harvest_by_link")
+            result = asyncio.run(wrapped(event))
+            self.assertIsNone(result)
+            self.assertEqual(called, [])
+            send_sub.assert_called_once_with(event, retry=False)
+
+    def test_check_subscription_access_admin_without_http(self):
+        result = asyncio.run(check_subscription_access(73412011))
+        self.assertEqual(result, SubscriptionAccess.ADMIN)
+
+    def test_check_subscription_access_subscribed(self):
+        async def fake_members(*args, **kwargs):
+            return {"members": [{"user_id": 555}]}
+
+        async def fake_get(*args, **kwargs):
+            response = mock.Mock()
+            response.status_code = 200
+            response.json = lambda: {"members": [{"user_id": 555}]}
+            return response
+
+        with mock.patch("httpx.AsyncClient.get", fake_get):
+            result = asyncio.run(check_subscription_access(555))
+            self.assertEqual(result, SubscriptionAccess.SUBSCRIBED)
+
+    def test_check_subscription_access_not_subscribed(self):
+        async def fake_get(*args, **kwargs):
+            response = mock.Mock()
+            response.status_code = 200
+            response.json = lambda: {"members": []}
+            return response
+
+        with mock.patch("httpx.AsyncClient.get", fake_get):
+            result = asyncio.run(check_subscription_access(556))
+            self.assertEqual(result, SubscriptionAccess.NOT_SUBSCRIBED)
+
+    def test_check_subscription_access_unavailable_on_timeout(self):
+        async def fake_get(*args, **kwargs):
+            raise httpx.TimeoutException("timeout")
+
+        with mock.patch("httpx.AsyncClient.get", fake_get):
+            result = asyncio.run(check_subscription_access(557))
+            self.assertEqual(result, SubscriptionAccess.UNAVAILABLE)
 
 
 class ConfigTests(unittest.TestCase):

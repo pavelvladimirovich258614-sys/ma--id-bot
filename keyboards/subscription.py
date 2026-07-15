@@ -21,11 +21,11 @@ def subscription_keyboard():
 
     builder = InlineKeyboardBuilder()
     builder.row(
-        LinkButton(text="Подписаться на канал", url=CHANNEL_LINK)
+        LinkButton(text="📣 Подписаться", url=CHANNEL_LINK)
     )
     builder.row(
         CallbackButton(
-            text="Проверить подписку",
+            text="✅ Проверить подписку",
             payload="subscription_retry"
         )
     )
@@ -45,11 +45,11 @@ def subscription_retry_keyboard():
 
     builder = InlineKeyboardBuilder()
     builder.row(
-        LinkButton(text="Подписаться на канал", url=CHANNEL_LINK)
+        LinkButton(text="📣 Подписаться", url=CHANNEL_LINK)
     )
     builder.row(
         CallbackButton(
-            text="Проверить подписку",
+            text="✅ Проверить подписку",
             payload="subscription_retry"
         )
     )

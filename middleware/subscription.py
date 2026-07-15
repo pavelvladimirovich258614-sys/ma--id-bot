@@ -24,20 +24,76 @@ from keyboards.subscription import subscription_keyboard, subscription_retry_key
 
 logger = logging.getLogger(__name__)
 
-CACHE_TTL_SUBSCRIBED = 300
-CACHE_TTL_NOT_SUBSCRIBED = 60
 PROTECTED_CALLBACK_PAYLOADS = {
     "get_user_id",
     "get_bot_id",
     "get_chat_id",
     "get_channel_id",
     "get_sticker_info",
+    "subscription_retry",
+    "harvest_menu",
+    "harvest_bot_id",
+    "harvest_by_link",
+    "harvest_by_message",
+    "harvest_back",
 }
 
 
 class SubscriptionCheckError(Exception):
     """Временная ошибка проверки подписки через MAX API."""
     pass
+
+
+class SubscriptionAccess:
+    ADMIN = "admin"
+    SUBSCRIBED = "subscribed"
+    NOT_SUBSCRIBED = "not_subscribed"
+    UNAVAILABLE = "unavailable"
+
+
+async def check_subscription_access(user_id: int) -> str:
+    """
+    Единый helper проверки доступа по подписке.
+    """
+    if user_id in ADMIN_USER_IDS:
+        return SubscriptionAccess.ADMIN
+
+    chat_id = CHANNEL_CHAT_ID if CHANNEL_CHAT_ID is not None else CHANNEL_ID
+    url = f"{API_BASE}/chats/{chat_id}/members"
+    headers = {"Authorization": BOT_TOKEN}
+    logger.info(f"Checking subscription: user_id={user_id}")
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                url,
+                headers=headers,
+                params={"user_ids": user_id}
+            )
+
+        logger.info(f"Members API status: {resp.status_code}")
+
+        if resp.status_code == 200:
+            try:
+                data = resp.json()
+            except Exception:
+                logger.warning("Members API invalid JSON")
+                return SubscriptionAccess.UNAVAILABLE
+
+            decision = _members_include_user(data, user_id)
+            logger.info(
+                f"Subscription decision: {decision} (source=api)"
+            )
+            return SubscriptionAccess.SUBSCRIBED if decision else SubscriptionAccess.NOT_SUBSCRIBED
+
+        logger.warning(f"Members API error: {resp.status_code}")
+        return SubscriptionAccess.UNAVAILABLE
+    except httpx.TimeoutException:
+        logger.warning("Members API timeout")
+        return SubscriptionAccess.UNAVAILABLE
+    except Exception:
+        logger.warning("Members API unavailable")
+        return SubscriptionAccess.UNAVAILABLE
 
 
 def require_subscription(handler_func: Callable[..., Awaitable[Any]]):
@@ -57,13 +113,9 @@ def require_subscription(handler_func: Callable[..., Awaitable[Any]]):
             logger.warning("Не удалось определить пользователя для проверки подписки")
             return await handler_func(event, *args, **kwargs)
 
-        if user_id in ADMIN_USER_IDS:
-            logger.info("Subscription decision: True (admin bypass)")
-            return await handler_func(event, *args, **kwargs)
-
         admin_user = await get_admin_user_state(user_id)
         if admin_user and bool(admin_user.get("is_banned")):
-            logger.warning("Пользователь заблокирован в админ-панели: %s", user_id)
+            logger.warning(f"Пользователь заблокирован в админ-панели: {user_id}")
             await _send_banned_message(event)
             await _answer_callback_if_needed(
                 event,
@@ -71,59 +123,34 @@ def require_subscription(handler_func: Callable[..., Awaitable[Any]]):
             )
             return None
 
-        user = await get_user(user_id)
-        await upsert_admin_user(user_id)
-        logger.info(
-            "Middleware entered: user_id=%s",
-            user_id,
-        )
+        access = await check_subscription_access(user_id)
 
-        event_decision = _get_event_subscription_decision(user)
-        if event_decision is True:
-            logger.info(
-                "Subscription decision: %s (source=%s)",
-                event_decision,
-                "event"
-            )
+        if access == SubscriptionAccess.ADMIN:
             return await handler_func(event, *args, **kwargs)
 
-        retry_payload = (
-            getattr(getattr(event, "callback", None), "payload", None)
-            == "subscription_retry"
-        )
-        cached_decision = _get_cached_subscription_decision(user)
-        if cached_decision is not None and not retry_payload:
-            logger.info(
-                "Subscription decision: %s (cached=%s)",
-                cached_decision,
-                True
+        if access == SubscriptionAccess.SUBSCRIBED:
+            await update_user(
+                user_id,
+                is_subscribed=1,
+                last_check=datetime.utcnow().isoformat(),
+                subscription_source="api"
             )
-            if cached_decision:
-                return await handler_func(event, *args, **kwargs)
+            await upsert_admin_user(user_id, is_subscribed=True)
+            return await handler_func(event, *args, **kwargs)
 
+        if access == SubscriptionAccess.NOT_SUBSCRIBED:
+            await update_user(
+                user_id,
+                is_subscribed=0,
+                last_check=datetime.utcnow().isoformat(),
+                subscription_source="api"
+            )
+            await upsert_admin_user(user_id, is_subscribed=False)
             await _send_subscription_message(event, retry=False)
             await _answer_callback_if_needed(event)
             return None
 
-        try:
-            is_subscribed = await _check_subscription(user_id)
-        except SubscriptionCheckError:
-            await _send_unavailable_message(event)
-            await _answer_callback_if_needed(event)
-            return None
-
-        await update_user(
-            user_id,
-            is_subscribed=1 if is_subscribed else 0,
-            last_check=datetime.utcnow().isoformat(),
-            subscription_source="api"
-        )
-        await upsert_admin_user(user_id, is_subscribed=is_subscribed)
-
-        if is_subscribed:
-            return await handler_func(event, *args, **kwargs)
-
-        await _send_subscription_message(event, retry=retry_payload)
+        await _send_unavailable_message(event)
         await _answer_callback_if_needed(event)
         return None
 
@@ -200,89 +227,6 @@ def _is_sticker_attachment(attachment: Any) -> bool:
         attachment.__class__.__name__ == "Sticker"
         or getattr(attachment, "type", None) == "sticker"
     )
-
-
-def _get_cached_subscription_decision(user: dict[str, Any]) -> bool | None:
-    """Возвращает кэшированное решение или None, если кэш устарел."""
-    if user.get("subscription_source") == "event":
-        return None
-
-    last_check = user.get("last_check")
-    if not last_check:
-        return None
-
-    try:
-        checked_at = datetime.fromisoformat(last_check)
-    except ValueError:
-        return None
-
-    is_subscribed = int(user.get("is_subscribed") or 0) == 1
-    ttl_seconds = (
-        CACHE_TTL_SUBSCRIBED
-        if is_subscribed
-        else CACHE_TTL_NOT_SUBSCRIBED
-    )
-    age_seconds = (datetime.utcnow() - checked_at).total_seconds()
-    if age_seconds < ttl_seconds:
-        return is_subscribed
-
-    return None
-
-
-def _get_event_subscription_decision(user: dict[str, Any]) -> bool | None:
-    """Возвращает состояние подписки, полученное из событий канала."""
-    if user.get("subscription_source") != "event":
-        return None
-
-    return int(user.get("is_subscribed") or 0) == 1
-
-
-async def _check_subscription(user_id: int) -> bool:
-    """
-    Проверяет подписку через MAX API.
-
-    Ошибки прав доступа и неверного канала блокируют пользователя.
-    Временные сетевые проблемы пропускают запрос.
-    """
-    chat_id = CHANNEL_CHAT_ID if CHANNEL_CHAT_ID is not None else CHANNEL_ID
-    url = f"{API_BASE}/chats/{chat_id}/members"
-    headers = {"Authorization": BOT_TOKEN}
-    logger.info("Checking subscription: user_id=%s", user_id)
-
-    chat_id = CHANNEL_CHAT_ID if CHANNEL_CHAT_ID is not None else CHANNEL_ID
-    url = f"{API_BASE}/chats/{chat_id}/members"
-    headers = {"Authorization": BOT_TOKEN}
-
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(
-                url,
-                headers=headers,
-                params={"user_ids": user_id}
-            )
-
-        logger.info("Members API status: %s", resp.status_code)
-
-        if resp.status_code == 200:
-            data = resp.json()
-            decision = _members_include_user(data, user_id)
-            logger.info(
-                "Subscription decision: %s (cached=%s)",
-                decision,
-                False
-            )
-            return decision
-
-        logger.warning("Members API error: %s", resp.status_code)
-        raise SubscriptionCheckError(f"Members API error: {resp.status_code}")
-    except SubscriptionCheckError:
-        raise
-    except httpx.TimeoutException:
-        logger.warning("Members API timeout")
-        raise SubscriptionCheckError("Members API timeout")
-    except Exception:
-        logger.warning("Members API unavailable")
-        raise SubscriptionCheckError("Members API unavailable")
 
 
 def _members_include_user(data: Any, user_id: int) -> bool:
@@ -378,7 +322,10 @@ async def _send_unavailable_message(event: Any) -> None:
     """Сообщает, что проверка подписки временно недоступна."""
     keyboard = subscription_retry_keyboard()
     attachments = [keyboard] if keyboard is not None else None
-    text = "Не удалось проверить подписку. Попробуйте ещё раз через несколько секунд."
+    text = (
+        "❌ Извините, сейчас не удалось проверить подписку. "
+        "Попробуйте ещё раз через несколько секунд."
+    )
     message = getattr(event, "message", None)
 
     if message is not None and callable(getattr(message, "answer", None)):
