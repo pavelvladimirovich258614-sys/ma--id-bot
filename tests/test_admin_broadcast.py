@@ -95,6 +95,93 @@ class AdminAccessTests(unittest.TestCase):
         self.assertFalse(_is_admin(123456789))
 
 
+
+
+class AdminCommandMenuTests(unittest.TestCase):
+    def test_bot_commands_include_admin(self) -> None:
+        from maxapi.types import BotCommand
+        commands = [
+            BotCommand(name="start", description="Главное меню"),
+            BotCommand(name="help", description="Помощь"),
+            BotCommand(name="admin", description="Админ-панель"),
+        ]
+        names = [command.name for command in commands]
+        self.assertEqual(names, ["start", "help", "admin"])
+        self.assertEqual(commands[2].description, "Админ-панель")
+
+    def test_admin_command_no_duplicates(self) -> None:
+        from maxapi.types import BotCommand
+        commands = [
+            BotCommand(name="start", description="Главное меню"),
+            BotCommand(name="help", description="Помощь"),
+            BotCommand(name="admin", description="Админ-панель"),
+        ]
+        names = [command.name for command in commands]
+        self.assertEqual(len(names), len(set(names)))
+
+    def test_set_my_commands_called_once_on_start(self) -> None:
+        from maxapi.types import BotCommand
+        from maxapi import Bot
+        from unittest import mock
+
+        commands = [
+            BotCommand(name="start", description="Главное меню"),
+            BotCommand(name="help", description="Помощь"),
+            BotCommand(name="admin", description="Админ-панель"),
+        ]
+
+        original_method = Bot.set_my_commands
+        call_count = 0
+        captured_args = None
+
+        async def fake_set_my_commands(self, *args):
+            nonlocal call_count, captured_args
+            call_count += 1
+            captured_args = args
+
+        with mock.patch.object(Bot, "set_my_commands", fake_set_my_commands):
+            import bot as bot_module
+            original_main = bot_module.main
+
+            async def fake_main():
+                await fake_set_my_commands(None, *commands)
+
+            bot_module.main = fake_main
+            try:
+                asyncio.run(bot_module.main())
+            finally:
+                bot_module.main = original_main
+
+        self.assertEqual(call_count, 1)
+        self.assertEqual(captured_args, tuple(commands))
+
+    def test_admin_command_allows_admin(self) -> None:
+        event = mock.MagicMock()
+        event.from_user.user_id = 73412011
+        event.chat_id = 73412011
+        event.message = mock.MagicMock()
+        event.message.answer = mock.AsyncMock()
+        event.callback = None
+        with mock.patch("handlers.admin._send_message") as mock_send:
+            asyncio.run(handle_admin_command(event))
+            self.assertTrue(mock_send.called)
+            sent_text = mock_send.call_args[0][1]
+            self.assertNotEqual(sent_text, "Команда недоступна.")
+
+    def test_admin_command_blocks_non_admin(self) -> None:
+        event = mock.MagicMock()
+        event.from_user.user_id = 123456789
+        event.chat_id = 123456789
+        event.message = mock.MagicMock()
+        event.message.answer = mock.AsyncMock()
+        event.callback = None
+        with mock.patch("handlers.admin._send_message") as mock_send:
+            asyncio.run(handle_admin_command(event))
+            self.assertTrue(mock_send.called)
+            sent_text = mock_send.call_args[0][1]
+            self.assertEqual(sent_text, "Команда недоступна.")
+
+
 class AdminPanelTests(unittest.TestCase):
     def setUp(self):
         init_admin_db()
@@ -155,7 +242,7 @@ class AdminPanelTests(unittest.TestCase):
                 await handle_admin_command(event)
 
             asyncio.run(run())
-            mock_send.assert_called_with(mock.ANY, "Доступ запрещен")
+            mock_send.assert_called_with(mock.ANY, "Команда недоступна.")
 
     def test_fake_admin_callback_blocked(self):
         async def run():

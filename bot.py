@@ -59,7 +59,8 @@ async def main():
     try:
         await bot.set_my_commands(
             BotCommand(name='start', description='Главное меню'),
-            BotCommand(name='help', description='Помощь')
+            BotCommand(name='help', description='Помощь'),
+            BotCommand(name='admin', description='Админ-панель'),
         )
     except Exception as e:
         logger.warning(f"Не удалось установить команды бота: {e}")

@@ -116,7 +116,7 @@ async def _send_message(event: Any, text: str, attachments: Any = None, text_for
 async def handle_admin_command(event: MessageCreated) -> None:
     user_id = _extract_user_id(event)
     if user_id is None or not _is_admin(user_id):
-        await _send_message(event, "Доступ запрещен")
+        await _send_message(event, "Команда недоступна.")
         return
 
     _set_admin_state(user_id, "admin_panel")
