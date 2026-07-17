@@ -1,16 +1,16 @@
-"""Stage 1 tests: MAX link normalization and config fallback."""
-
 from __future__ import annotations
 
 import asyncio
 import importlib
 import os
-import sys
 import unittest
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-sys.path.insert(0, "/opt/ma--id-bot")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 
 
 class TestNormalizeMaxLink(unittest.TestCase):
