@@ -10,7 +10,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-sys.path.insert(0, "/opt/ma--id-bot")
+sys.path.insert(0, "/root/ma--id-bot")
 
 
 class TestNormalizeMaxLink(unittest.TestCase):
@@ -266,7 +266,7 @@ class TestHarvestLinkConfigFallback(unittest.TestCase):
              patch("handlers.messages._schedule_discovered_entity_save") as mock_save, \
              patch("handlers.messages._delete_original_message") as mock_delete, \
              patch("handlers.messages.id_harvest_keyboard", return_value="keyboard"), \
-             patch("handlers.messages.resolve_public_max_link", return_value=None):
+             patch("handlers.messages.resolve_public_max_link", new_callable=AsyncMock, return_value=None):
             result = asyncio.run(
                 _handle_harvest_link(event, message, "https://max.ru/id752703975446_biz")
             )
@@ -277,6 +277,51 @@ class TestHarvestLinkConfigFallback(unittest.TestCase):
         args, kwargs = message.answer.call_args
         self.assertIn("attachments", kwargs)
         self.assertEqual(kwargs["attachments"], ["keyboard"])
+
+
+    def test_public_resolver_called_and_result_used(self):
+        os.environ["CHANNEL_ID"] = ""
+        os.environ["CHANNEL_LINK"] = ""
+        os.environ["CHANNEL_CHAT_ID"] = ""
+        self._apply_env()
+
+        from handlers.messages import _handle_harvest_link
+
+        public_info = {
+            "normalized_link": "@olubimtseva",
+            "raw_channel_id": 69403472385364,
+            "bot_chat_id": -69403472385364,
+            "title": "Ольга Любимцева",
+            "participants_count": 5862,
+            "source": "public_page",
+        }
+        fake_bot = SimpleNamespace(get_chat_by_link=AsyncMock(side_effect=Exception("chat.not.found")))
+        event = SimpleNamespace(
+            bot=fake_bot,
+            from_user=SimpleNamespace(user_id=1),
+            message=SimpleNamespace(
+                recipient=SimpleNamespace(chat_id=2),
+                delete=AsyncMock(),
+            ),
+            chat_id=2,
+        )
+        message = SimpleNamespace(answer=AsyncMock())
+
+        with patch("handlers.messages.clear_harvest_state") as mock_clear, \
+             patch("handlers.messages._schedule_discovered_entity_save") as mock_save, \
+             patch("handlers.messages._delete_original_message") as mock_delete, \
+             patch("handlers.messages.id_harvest_keyboard", return_value="keyboard"), \
+             patch("handlers.messages.resolve_public_max_link", new_callable=AsyncMock, return_value=public_info) as mock_resolver:
+            result = asyncio.run(
+                _handle_harvest_link(event, message, "https://max.ru/olubimtseva")
+            )
+
+        self.assertTrue(result)
+        mock_resolver.assert_called_once_with("olubimtseva")
+        fake_bot.get_chat_by_link.assert_called_once_with(link="olubimtseva")
+        mock_save.assert_called_once()
+        self.assertEqual(mock_save.call_args.kwargs["entity_id"], -69403472385364)
+        message.answer.assert_called_once()
 
 
 if __name__ == "__main__":

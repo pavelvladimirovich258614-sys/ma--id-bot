@@ -1,3 +1,4 @@
+from services.public_max_page_resolver import resolve_public_max_link
 """
 Обработчик входящих сообщений: стикеры, пересланные сообщения, каналы.
 
@@ -381,6 +382,37 @@ async def _handle_harvest_link(
                 "Harvest link lookup did not find accessible object: "
                 f"link={text}; query={search_query}; error={error}"
             )
+            # Fallback: попробовать определить ID публичного канала по странице MAX.
+            public_info = None
+            try:
+                public_info = await resolve_public_max_link(search_query)
+            except Exception as resolver_error:
+                logger.warning(
+                    "Public MAX page resolver failed: "
+                    f"link={text}; query={search_query}; error={resolver_error}"
+                )
+
+            if public_info:
+                chat_id = public_info["bot_chat_id"]
+                title = public_info.get("title") or "Без названия"
+                chat_link = f"https://max.ru/{search_query.lstrip('@')}"
+                clear_harvest_state(event.from_user.user_id)
+                _schedule_discovered_entity_save(
+                    entity_id=chat_id,
+                    entity_type="chat",
+                    discovered_by_user_id=event.from_user.user_id,
+                )
+                response_text = (
+                    "🆔 ID по ссылке\n\n"
+                    f"Название: {title}\n"
+                    f"ID: {chat_id}\n"
+                    f"Тип: chat"
+                )
+                if chat_link:
+                    response_text += f"\nСсылка: {chat_link}"
+                await _send_feedback(message, response_text)
+                return True
+
             response_text = (
                 "❌ MAX API не смог определить ID по этой публичной ссылке.\n\n"
                 "Попробуйте один из надёжных способов:"

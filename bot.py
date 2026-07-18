@@ -11,7 +11,7 @@ from maxapi.enums.parse_mode import ParseMode
 from maxapi.types import BotCommand
 
 from config import BOT_TOKEN
-from database.storage import init_db
+from database.storage import init_db, init_public_link_cache
 from handlers.start import register_start_handlers
 from handlers.callbacks import register_callback_handlers
 from handlers.messages import register_message_handler
@@ -40,6 +40,12 @@ async def main():
     dp = Dispatcher()
 
     await init_db()
+
+    # Инициализация кэша публичных ссылок MAX (resolver страниц).
+    try:
+        init_public_link_cache()
+    except Exception as e:
+        logger.warning(f"Не удалось инициализировать кэш публичных ссылок MAX: {e}")
 
     # Регистрация обработчиков
     # 1) bot_started, /start, /help (command handlers)
