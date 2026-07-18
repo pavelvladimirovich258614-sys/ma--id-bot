@@ -12,6 +12,8 @@ from maxapi.types import BotCommand
 
 from config import BOT_TOKEN
 from database.storage import init_db
+from database.admin_storage import init_admin_db
+from tasks.broadcast_worker import mark_running_as_interrupted
 from handlers.start import register_start_handlers
 from handlers.callbacks import register_callback_handlers
 from handlers.messages import register_message_handler
@@ -42,18 +44,36 @@ async def main():
 
     await init_db()
 
+    # Инициализация таблиц рассылок (idempotent: CREATE TABLE IF NOT EXISTS).
+    # Не запускает рассылки и не меняет статус existing-записей.
+    try:
+        init_admin_db()
+    except Exception as e:
+        logger.warning(f"Не удалось инициализировать БД рассылок: {e}")
+
+    # После перезапуска любые рассылки в статусе running считаем прерванными
+    # (воркер прошлого процесса уже не работает). Не запускает рассылки.
+    try:
+        recovered = mark_running_as_interrupted()
+        if recovered:
+            logger.warning(f"Восстановлено статусов рассылок: {recovered}")
+    except Exception as e:
+        logger.warning(f"Не удалось восстановить статусы рассылок: {e}")
+
     # Регистрация обработчиков
     # 1) bot_started, /start, /help (command handlers)
     register_start_handlers(dp)
     # 2) callback кнопки (message_callback)
     register_callback_handlers(dp)
-    # 3) стикеры и пересланные сообщения (message_created)
-    register_message_handler(dp)
-    # 4) добавление бота в чат/канал (bot_added)
-    register_bot_added_handler(dp)
-    # 5) подписка и отписка пользователей от обязательного канала
-    register_subscription_event_handlers(dp)
+    # 3) админ-панель: /admin (Command-фильтр) регистрируется ДО общего
+    #    message_created, иначе общий обработчик перехватывает /admin.
     register_admin_handlers(dp)
+    # 4) стикеры и пересланные сообщения (message_created)
+    register_message_handler(dp)
+    # 5) добавление бота в чат/канал (bot_added)
+    register_bot_added_handler(dp)
+    # 6) подписка и отписка пользователей от обязательного канала
+    register_subscription_event_handlers(dp)
 
     # Установка команд бота
     try:

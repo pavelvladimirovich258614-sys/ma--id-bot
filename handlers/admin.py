@@ -29,6 +29,7 @@ from keyboards.admin import (
     admin_broadcast_text_keyboard,
     admin_panel_keyboard,
 )
+from keyboards.main_menu import main_menu_keyboard
 from tasks.broadcast_worker import start_broadcast, stop_broadcast
 
 logger = logging.getLogger(__name__)
@@ -101,6 +102,13 @@ async def _answer(event: Any, notification: str = "Готово") -> None:
 
 
 async def _send_message(event: Any, text: str, attachments: Any = None, text_format: str = "markdown") -> None:
+    # Защита от случайных None в списке вложений: ни MAX API, ни
+    # message.answer() не принимают [None]. Пустой список заменяем на None.
+    if isinstance(attachments, list):
+        attachments = [a for a in attachments if a is not None]
+        if not attachments:
+            attachments = None
+
     message = getattr(event, "message", None)
     if message is not None and callable(getattr(message, "answer", None)):
         await message.answer(text=text, attachments=attachments)
@@ -138,7 +146,7 @@ async def handle_admin_callback(event: MessageCallback) -> None:
 
     if payload == "admin_close":
         _clear_admin_state(user_id)
-        await _send_message(event, "Панель закрыта", attachments=[None])
+        await _send_message(event, "Панель закрыта", attachments=[main_menu_keyboard()])
         await _answer(event, "Закрыто")
         return
 
@@ -234,6 +242,38 @@ async def handle_admin_callback(event: MessageCallback) -> None:
     await _answer(event, "Неизвестное состояние")
 
 
+async def route_admin_message(event: MessageCreated) -> bool:
+    """Маршрутизирует админ-текст из общего обработчика сообщений.
+
+    Вызывается из handlers/messages.py (on_message) ДО остальной логики.
+    Возвращает True, если событие относится к активной админ-сессии
+    (и было обработано), иначе False. Сама handle_admin_message внутри
+    сама проверяет права и активное состояние и корректно завершается
+    для посторонних пользователей.
+    """
+    user_id = _extract_user_id(event)
+    if user_id is None or not _is_admin(user_id):
+        return False
+    state = _get_admin_state(user_id)
+    if not state:
+        return False
+    await handle_admin_message(event)
+    return True
+
+
+async def route_admin_callback(event: MessageCallback) -> bool:
+    """Маршрутизирует admin_* callback из общего обработчика callbacks.
+
+    Вызывается из handlers/callbacks.py (on_callback), когда payload
+    начинается с "admin_". Возвращает True после обработки.
+    """
+    payload = getattr(getattr(event, "callback", None), "payload", None)
+    if isinstance(payload, str) and payload.startswith("admin_"):
+        await handle_admin_callback(event)
+        return True
+    return False
+
+
 async def handle_admin_message(event: MessageCreated) -> None:
     user_id = _extract_user_id(event)
     if user_id is None or not _is_admin(user_id):
@@ -320,10 +360,16 @@ async def _handle_broadcast_launch(
 
 
 def register_admin_handlers(dp: Any) -> None:
-    """Регистрирует обработчики админ-панели."""
+    """Регистрирует обработчики админ-панели.
+
+    ВАЖНО: админ-сообщения и админ-callback маршрутизируются из общих
+    обработчиков (handlers/messages.py и handlers/callbacks.py) через
+    функции route_admin_message / route_admin_callback. Это гарантирует
+    ровно один путь маршрутизации и исключает catch-all перехват событий.
+    Команда /admin регистрируется отдельно с фильтром Command и ДОЛЖНА
+    быть зарегистрирована раньше общего message_created (см. bot.py).
+    """
     dp.message_created(Command("admin"))(handle_admin_command)
-    dp.message_callback()(handle_admin_callback)
-    dp.message_created()(handle_admin_message)
 
 async def _handle_last_broadcast(event: MessageCreated, user_id: int) -> None:
     broadcast_id = _get_last_broadcast_id(user_id)

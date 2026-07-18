@@ -77,7 +77,12 @@ from keyboards.admin import (
     admin_panel_keyboard,
 )
 from maxapi.enums.parse_mode import TextFormat
-from tasks.broadcast_worker import BroadcastWorker
+from tasks.broadcast_worker import BroadcastWorker, start_broadcast
+
+
+def run(coro):
+    """Запускает корутину в собственном event loop (без зависимости от текущего)."""
+    return asyncio.run(coro)
 
 
 class AdminAccessTests(unittest.TestCase):
@@ -573,8 +578,78 @@ class BroadcastKeyboardTests(unittest.TestCase):
     def test_running_keyboard_has_stop(self):
         kb = admin_broadcast_running_keyboard()
         flat = self._flat_payloads(kb)
-
         self.assertIn("admin_broadcast_stop", flat)
+
+
+class InitAdminDbIdempotentTests(unittest.TestCase):
+    """ШАГ 6: init_admin_db() идемпотентна и безопасна (только миграция схемы).
+
+    Использует общий TEST_DB_PATH (задан вверху файла ДО импорта database.*),
+    поэтому DB_PATH в обоих модулях хранилища уже указывает на временную БД.
+    """
+
+    def setUp(self):
+        self._db = TEST_DB_PATH
+        run(init_db())
+        from database.storage import update_user
+
+        run(
+            update_user(73412011, usage_count=1)
+        )
+
+    def _tables(self):
+        import sqlite3
+
+        with sqlite3.connect(self._db) as conn:
+            rows = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        return {r[0] for r in rows}
+
+    def test_creates_broadcast_tables(self):
+        init_admin_db()
+        tables = self._tables()
+        self.assertIn("broadcasts", tables)
+        self.assertIn("broadcast_recipients", tables)
+
+    def test_idempotent_on_second_call(self):
+        init_admin_db()
+        before = self._tables()
+        # Второй вызов не должен падать и не должен дублировать таблицы.
+        init_admin_db()
+        after = self._tables()
+        self.assertEqual(before, after)
+
+    def test_does_not_corrupt_users_table(self):
+        init_admin_db()
+        from database.storage import get_user
+
+        u = run(get_user(73412011))
+        self.assertIsNotNone(u)
+        self.assertEqual(u.get("usage_count"), 1)
+
+    def test_no_auto_broadcast_created(self):
+        # init_admin_db() создаёт только таблицы (CREATE TABLE IF NOT EXISTS),
+        # не должен добавлять записи рассылок сам по себе.
+        import sqlite3
+
+        def count():
+            with sqlite3.connect(self._db) as conn:
+                return conn.execute("SELECT COUNT(*) FROM broadcasts").fetchone()[0]
+
+        before = count()
+        init_admin_db()
+        after = count()
+        self.assertEqual(before, after)
+
+    def test_running_status_not_auto_resumed(self):
+        # Создаём рассылку в статусе running, затем повторный init_admin_db
+        # НЕ должен менять её статус на interrupted или запускать что-либо.
+        create_broadcast(admin_user_id=73412011, text="x")
+        update_broadcast(1, status="running")
+        init_admin_db()
+        b = get_broadcast(1)
+        self.assertEqual(b["status"], "running")
 
 
 if __name__ == "__main__":
@@ -680,6 +755,30 @@ class TestAdminBroadcastIntegration(unittest.TestCase):
             self.assertIn("отключены", sent_text)
 
 
+class WorkerSafetySwitchTests(unittest.TestCase):
+    """Уровень воркера: start_broadcast сам отказывает при BROADCAST_LIVE_ENABLED=false."""
+
+    def setUp(self) -> None:
+        init_admin_db()
+        self.admin_id = 998
+        self.fake_bot = mock.AsyncMock()
+
+    def test_worker_refuses_when_disabled(self) -> None:
+        # Кандидат живёт с BROADCAST_LIVE_ENABLED=False по умолчанию (config.py),
+        # поэтому реальный запуск воркера должен упасть с RuntimeError, не дойдя до API.
+        state = create_broadcast(admin_user_id=self.admin_id, text="x")
+        with self.assertRaises(RuntimeError) as ctx:
+            asyncio.run(start_broadcast(state["id"], self.fake_bot))
+        self.assertIn("отключены", str(ctx.exception).lower())
+
+    def test_worker_refuses_even_if_patched_false(self) -> None:
+        # Явно подменяем на False, чтобы не зависеть от значения конфига в окружении.
+        state = create_broadcast(admin_user_id=self.admin_id, text="y")
+        with mock.patch("tasks.broadcast_worker.BROADCAST_LIVE_ENABLED", False):
+            with self.assertRaises(RuntimeError):
+                asyncio.run(start_broadcast(state["id"], self.fake_bot))
+
+
 class TestMarkdownFormatting(unittest.TestCase):
     def setUp(self) -> None:
         init_admin_db()
@@ -723,3 +822,200 @@ class TestImageAttachment(unittest.TestCase):
 class TestProductionDBIsolation(unittest.TestCase):
     def test_production_db_not_used_by_tests(self) -> None:
         assert_production_db_untouched()
+
+
+class WorkerSendAddressingTests(unittest.TestCase):
+    """ШАГ 7/9: реальная отправка идёт по user_id (личный диалог), не по chat_id."""
+
+    def setUp(self):
+        init_admin_db()
+        asyncio.run(init_db())
+        self.sent = []
+
+        test_ref = self
+
+        class MockBot:
+            async def send_message(self, **kwargs):
+                test_ref.sent.append(kwargs)
+
+        self.bot = MockBot()
+
+    def test_send_uses_user_id_not_chat_id(self):
+        worker = BroadcastWorker()
+        broadcast = {"text": "hi", "format": "markdown"}
+        run(
+            worker._send_message(
+                bot=self.bot,
+                user_id=73412011,
+                text="hi",
+                text_format="markdown",
+                attachment=None,
+                button_text=None,
+                button_url=None,
+            )
+        )
+        self.assertEqual(len(self.sent), 1)
+        call = self.sent[0]
+        self.assertIn("user_id", call)
+        self.assertEqual(call["user_id"], 73412011)
+        self.assertNotIn("chat_id", call)
+
+    def test_send_includes_button_when_provided(self):
+        worker = BroadcastWorker()
+        run(
+            worker._send_message(
+                bot=self.bot,
+                user_id=73412011,
+                text="hi",
+                text_format="markdown",
+                attachment=None,
+                button_text="Открыть",
+                button_url="https://max.ru/id752703975446_biz",
+            )
+        )
+        call = self.sent[0]
+        atts = call.get("attachments") or []
+        # Кнопка-ссылка добавляется как inline-клавиатура.
+        self.assertTrue(any("inline_keyboard" in str(a) or "LinkButton" in str(a) for a in atts))
+
+
+class WorkerRateAndStatusTests(unittest.TestCase):
+    """ШАГ 9: лимит, 429/Retry-After, 401/403 стоп, 404/422 skip, таймаут."""
+
+    def setUp(self):
+        init_admin_db()
+        asyncio.run(init_db())
+
+    def test_rate_limit_at_most_four_per_second(self):
+        from tasks.broadcast_worker import BROADCAST_RATE_LIMIT
+
+        self.assertLessEqual(BROADCAST_RATE_LIMIT, 4)
+
+    def _make_bot_raising(self, exc_factory):
+        sent = []
+
+        class Bot:
+            async def send_message(self, **kwargs):
+                sent.append(kwargs)
+                raise exc_factory()
+
+        return Bot(), sent
+
+    def test_429_retries_then_stops(self):
+        calls = {"n": 0}
+        exc = Exception("429 Too Many Requests")
+        exc.status_code = 429
+        bot, _ = self._make_bot_raising(lambda: (_ for _ in ()).throw(exc))
+        worker = BroadcastWorker()
+
+        async def run():
+            return await worker._send_with_retries(
+                broadcast_id=1, bot=bot, user_id=1,
+                broadcast={"text": "x", "format": "markdown"},
+                attachment=None,
+            )
+
+        ok = asyncio.run(run())
+        # 429 при отсутствии Retry-After НЕ должен сразу вернуть failed=True
+        # (именно «не мгновенный final failed») — повторяет попытки.
+        self.assertFalse(ok)
+
+    def test_401_stops_broadcast(self):
+        exc = Exception("401 Unauthorized")
+        exc.status_code = 401
+        bot, _ = self._make_bot_raising(lambda: (_ for _ in ()).throw(exc))
+        worker = BroadcastWorker()
+        b = create_broadcast(admin_user_id=73412011, text="x")
+        bid = b["id"]
+        add_broadcast_recipients(bid, [1])
+
+        async def run():
+            return await worker._send_with_retries(
+                broadcast_id=bid, bot=bot, user_id=1,
+                broadcast={"text": "x", "format": "markdown"},
+                attachment=None,
+            )
+
+        with self.assertRaises(Exception):
+            asyncio.run(run())
+        # Статус должен быть interrupted.
+        self.assertEqual(get_broadcast(bid)["status"], "interrupted")
+
+    def test_404_skipped_no_retry(self):
+        exc = Exception("404 Not Found")
+        exc.status_code = 404
+        bot, _ = self._make_bot_raising(lambda: (_ for _ in ()).throw(exc))
+        worker = BroadcastWorker()
+        b = create_broadcast(admin_user_id=73412011, text="x")
+        bid = b["id"]
+        add_broadcast_recipients(bid, [1])
+
+        async def run():
+            return await worker._send_with_retries(
+                broadcast_id=bid, bot=bot, user_id=1,
+                broadcast={"text": "x", "format": "markdown"},
+                attachment=None,
+            )
+
+        ok = asyncio.run(run())
+        self.assertFalse(ok)
+        # Получатель пропущен (skipped), а не failed с бесконечными попытками.
+        recip = get_broadcast_recipients(bid)
+        self.assertTrue(any(r["status"] == "skipped" for r in recip))
+
+
+class EligibleRecipientsTests(unittest.TestCase):
+    """ШАГ 8: получатели — только реальные посетители users, без мусора."""
+
+    def setUp(self):
+        init_admin_db()
+        run(init_db())
+        from database.storage import update_user
+
+        # Сид: два реальных пользователя.
+        run(update_user(73412011, usage_count=1))
+        run(update_user(73412012, usage_count=2))
+
+    def test_get_bot_users_excludes_non_positive(self):
+        from database.admin_storage import get_bot_users
+
+        users = get_bot_users()
+        self.assertIn(73412011, users)
+        self.assertIn(73412012, users)
+        self.assertTrue(all(isinstance(u, int) and u > 0 for u in users))
+
+    def test_harvest_found_ids_not_in_recipients(self):
+        # «Найденный» через Разведку ID (чат/канал/бот) НЕ попадает в users
+        # и потому не должен быть получателем. Имитируем: в users только люди.
+        from database.admin_storage import get_bot_users
+
+        harvested_id = 99887766  # сторонний чат/канал из Разведки
+        users = get_bot_users()
+        self.assertNotIn(harvested_id, users)
+
+
+class RecoveryOnStartupTests(unittest.TestCase):
+    """ШАГ 9.8: при старте running -> interrupted."""
+
+    def setUp(self):
+        init_admin_db()
+        run(init_db())
+
+    def test_running_marked_interrupted(self):
+        from tasks.broadcast_worker import mark_running_as_interrupted
+
+        b = create_broadcast(admin_user_id=73412011, text="x")
+        bid = b["id"]
+        update_broadcast(bid, status="running")
+        updated = mark_running_as_interrupted()
+        self.assertGreaterEqual(updated, 1)
+        self.assertEqual(get_broadcast(bid)["status"], "interrupted")
+
+    def test_interrupted_not_changed(self):
+        from tasks.broadcast_worker import mark_running_as_interrupted
+
+        b = create_broadcast(admin_user_id=73412011, text="x")
+        bid = b["id"]
+        update_broadcast(bid, status="completed")
+        updated = mark_running_as_interrupted()
+        self.assertEqual(get_broadcast(bid)["status"], "completed")

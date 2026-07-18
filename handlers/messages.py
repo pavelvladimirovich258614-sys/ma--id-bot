@@ -28,6 +28,8 @@ from handlers.callbacks import (
 from keyboards.main_menu import dismiss_keyboard, id_harvest_keyboard
 from middleware.subscription import require_subscription
 
+from handlers.admin import route_admin_message
+
 logger = logging.getLogger(__name__)
 
 _CHATS_CACHE_TTL = 60
@@ -729,6 +731,11 @@ def register_message_handler(dp):
             user_id = getattr(getattr(event, 'from_user', None), 'user_id', None)
             harvest_state = get_harvest_state(user_id) if user_id else None
             message_text = (getattr(message.body, 'text', None) or '').strip()
+
+            # Админ-маршрутизация: активная админ-сессия обрабатывается
+            # здесь и только здесь (один путь, без catch-all handler).
+            if user_id and await route_admin_message(event):
+                return
 
             if harvest_state == WAITING_FOR_LINK:
                 await _handle_harvest_link(event, message, message_text)

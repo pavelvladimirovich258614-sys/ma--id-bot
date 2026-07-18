@@ -4,6 +4,7 @@
 import asyncio
 import json
 import logging
+import sqlite3
 import time
 from datetime import datetime
 from typing import Any
@@ -23,10 +24,14 @@ from database.admin_storage import (
 
 logger = logging.getLogger(__name__)
 
-BROADCAST_RATE_LIMIT = 10
+# Ограничение MAX API — 30 RPS на бота. Берём консервативный предел <= 4 сообщ/сек,
+# чтобы оставить запас под обычные ответы бота во время рассылки.
+BROADCAST_RATE_LIMIT = 4
 BROADCAST_MAX_RETRIES = 3
 BROADCAST_RETRY_BACKOFF_BASE = 1
 BROADCAST_RETRY_BACKOFF_MAX = 60
+# Ограниченное время одной отправки, чтобы рассылка не зависала навечно.
+BROADCAST_SEND_TIMEOUT = 15
 BROADCAST_PROGRESS_UPDATE_INTERVAL = 5
 BROADCAST_PROGRESS_UPDATE_EVERY = 25
 
@@ -133,7 +138,8 @@ class BroadcastWorker:
                 finished_at=datetime.utcnow().isoformat(),
             )
         except Exception as exc:
-            logger.exception("Ошибка рассылки %s: %s", broadcast_id, exc)
+            # Не логируем полный текст исключения: в нём может быть токен/секретный URL.
+            logger.error("Ошибка рассылки %s (код %s)", broadcast_id, self._extract_status_code(exc))
             update_broadcast(
                 broadcast_id,
                 status="interrupted",
@@ -188,10 +194,14 @@ class BroadcastWorker:
                     button_url=button_url,
                 )
                 return True
+            except asyncio.TimeoutError:
+                # Истек BROADCAST_SEND_TIMEOUT — повторяем с backoff, не фейлим сразу.
+                status_code = None
+                error_text = "timeout"
             except RuntimeError as exc:
                 error_text = str(exc)
                 if "401" in error_text or "403" in error_text:
-                    logger.error("Системная ошибка рассылки, остановка: %s", error_text)
+                    logger.error("Системная ошибка рассылки (401/403), остановка")
                     update_broadcast(broadcast_id, status="interrupted")
                     raise
                 update_recipient_status(
@@ -207,7 +217,7 @@ class BroadcastWorker:
                 error_text = str(exc)
                 status_code = self._extract_status_code(exc)
                 if status_code in (401, 403):
-                    logger.error("Системная ошибка рассылки, остановка: %s", error_text)
+                    logger.error("Системная ошибка рассылки (401/403), остановка")
                     update_broadcast(broadcast_id, status="interrupted")
                     raise
                 if status_code in (404, 422):
@@ -229,6 +239,15 @@ class BroadcastWorker:
                     error_code=str(status_code) if status_code else "error",
                     error_text=error_text,
                 )
+                # 429 (Too Many Requests): уважаем Retry-After, иначе экспоненциальный backoff.
+                if status_code == 429:
+                    retry_after = self._extract_retry_after(exc)
+                    delay = retry_after if retry_after is not None else min(
+                        BROADCAST_RETRY_BACKOFF_BASE * (2 ** (attempt - 1)),
+                        BROADCAST_RETRY_BACKOFF_MAX,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
                 await asyncio.sleep(min(
                     BROADCAST_RETRY_BACKOFF_BASE * (2 ** (attempt - 1)),
                     BROADCAST_RETRY_BACKOFF_MAX,
@@ -264,11 +283,17 @@ class BroadcastWorker:
 
         format_mode = TextFormat.MARKDOWN if text_format == "markdown" else None
 
-        await bot.send_message(
-            chat_id=user_id,
-            text=text,
-            attachments=attachments if attachments else None,
-            format=format_mode,
+        # MAX API принимает user_id как параметр личного диалога (см. maxapi
+        # send_message: elif self.user_id: params["user_id"] = self.user_id).
+        # users-таблица хранит именно user_id, поэтому шлём по user_id.
+        await asyncio.wait_for(
+            bot.send_message(
+                user_id=user_id,
+                text=text,
+                attachments=attachments if attachments else None,
+                format=format_mode,
+            ),
+            timeout=BROADCAST_SEND_TIMEOUT,
         )
 
     def _extract_status_code(self, exc: BaseException) -> int | None:
@@ -286,6 +311,26 @@ class BroadcastWorker:
                 return int(part)
         return None
 
+    def _extract_retry_after(self, exc: BaseException) -> int | None:
+        """Извлекает Retry-After (сек) из ответа 429, если он есть."""
+        response = getattr(exc, "response", None)
+        if response is None:
+            return None
+        headers = getattr(response, "headers", None)
+        if not headers:
+            return None
+        raw = None
+        if isinstance(headers, dict):
+            raw = headers.get("Retry-After") or headers.get("retry-after")
+        else:
+            raw = getattr(headers, "get", lambda *_: None)("Retry-After")
+        if raw is None:
+            return None
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return None
+
 
 worker = BroadcastWorker()
 
@@ -300,3 +345,26 @@ async def start_broadcast(broadcast_id: int, bot: Any) -> None:
 def stop_broadcast(broadcast_id: int) -> None:
     """Останавливает рассылку."""
     worker.stop(broadcast_id)
+
+
+def mark_running_as_interrupted() -> int:
+    """При старте бота переводит рассылки в статусе running в interrupted.
+
+    Защита от «зомби»-рассылок после падения/перезапуска процесса: в прошлой
+    жизни воркер уже не работает, поэтому running считается прерванным.
+    Возвращает число изменённых записей.
+    """
+    from database.admin_storage import DB_PATH
+
+    updated = 0
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.execute(
+                "UPDATE broadcasts SET status='interrupted', "
+                "finished_at=datetime('now') WHERE status='running'"
+            )
+            updated = cur.rowcount
+            conn.commit()
+    except Exception as exc:  # pragma: no cover - защита запуска
+        logger.error("Не удалось восстановить статусы рассылок: %s", type(exc).__name__)
+    return updated

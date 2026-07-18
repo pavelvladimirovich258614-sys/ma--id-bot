@@ -11,6 +11,8 @@ from maxapi.types import MessageCallback
 from keyboards.main_menu import WELCOME_TEXT, id_harvest_keyboard, main_menu_keyboard
 from middleware.subscription import require_subscription
 
+from handlers.admin import route_admin_callback
+
 logger = logging.getLogger(__name__)
 
 _last_callback = {}
@@ -319,6 +321,13 @@ def register_callback_handlers(dp):
                 clear_harvest_state(user.user_id)
                 response_keyboard = main_menu_keyboard()
                 text = WELCOME_TEXT
+
+            elif payload and isinstance(payload, str) and payload.startswith("admin_"):
+                # Ровно один маршрут для admin_* callback: делегируем
+                # в handlers/admin.py. handle_admin_callback сам отвечает
+                # на callback и редактирует сообщение.
+                await route_admin_callback(event)
+                return
 
             else:
                 logger.warning(f"Unknown callback payload: {payload}")
