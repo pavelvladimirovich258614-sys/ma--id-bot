@@ -125,8 +125,84 @@ async def update_user(user_id: int, **fields: Any) -> dict[str, Any]:
                 next_user["is_subscribed"],
                 next_user["last_check"],
                 next_user["subscription_source"],
-            )
+            ),
         )
         await db.commit()
 
     return next_user
+
+
+def init_public_link_cache() -> None:
+    """Создает таблицу кэша публичных ссылок MAX."""
+    import sqlite3
+
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS known_public_max_links (
+                normalized_link TEXT PRIMARY KEY,
+                raw_channel_id INTEGER NOT NULL,
+                bot_chat_id INTEGER NOT NULL,
+                title TEXT,
+                participants_count INTEGER,
+                source TEXT NOT NULL,
+                first_seen_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.commit()
+
+
+def get_cached_public_link(normalized_link: str) -> dict[str, Any] | None:
+    """Возвращает кэшированную запись публичной ссылки."""
+    import sqlite3
+
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT * FROM known_public_max_links WHERE normalized_link = ?",
+            (normalized_link,),
+        ).fetchone()
+    if not row:
+        return None
+    return dict(row)
+
+
+def upsert_public_link_cache(record: dict[str, Any]) -> None:
+    """Сохраняет или обновляет кэш публичной ссылки."""
+    import sqlite3
+
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            """
+            INSERT INTO known_public_max_links (
+                normalized_link,
+                raw_channel_id,
+                bot_chat_id,
+                title,
+                participants_count,
+                source,
+                first_seen_at,
+                last_seen_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(normalized_link) DO UPDATE SET
+                raw_channel_id = excluded.raw_channel_id,
+                bot_chat_id = excluded.bot_chat_id,
+                title = excluded.title,
+                participants_count = excluded.participants_count,
+                last_seen_at = excluded.last_seen_at
+            """,
+            (
+                record["normalized_link"],
+                record["raw_channel_id"],
+                record["bot_chat_id"],
+                record.get("title"),
+                record.get("participants_count"),
+                record["source"],
+                record["first_seen_at"],
+                record["last_seen_at"],
+            ),
+        )
+        conn.commit()

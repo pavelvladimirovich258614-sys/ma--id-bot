@@ -13,6 +13,7 @@ from maxapi.types import BotCommand
 from config import BOT_TOKEN
 from database.storage import init_db
 from database.admin_storage import init_admin_db
+from database.storage import init_public_link_cache
 from tasks.broadcast_worker import mark_running_as_interrupted
 from handlers.start import register_start_handlers
 from handlers.callbacks import register_callback_handlers
@@ -50,6 +51,11 @@ async def main():
         init_admin_db()
     except Exception as e:
         logger.warning(f"Не удалось инициализировать БД рассылок: {e}")
+
+    try:
+        init_public_link_cache()
+    except Exception as e:
+        logger.warning(f"Не удалось инициализировать кэш публичных ссылок MAX: {e}")
 
     # После перезапуска любые рассылки в статусе running считаем прерванными
     # (воркер прошлого процесса уже не работает). Не запускает рассылки.
