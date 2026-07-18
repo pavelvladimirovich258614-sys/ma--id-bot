@@ -104,7 +104,7 @@ def _parse_channel_info(html: str, alias: str) -> dict[str, Any] | None:
 
 def _extract_canonical(html: str, link_info_start: int) -> str:
     """Извлекает canonical из области около linkInfo."""
-    window = html[link_info_start: link_info_start + 400]
+    window = html[link_info_start: link_info_start + 2000]
     match = re.search(r"canonical:\"(?P<value>[^\"]+)\"", window)
     if not match:
         return ""
@@ -195,8 +195,6 @@ async def resolve_public_max_link(url_or_alias: str) -> dict[str, Any] | None:
         headers = {
             "User-Agent": "Mozilla/5.0",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Accept-Language": "en-US,en;q=0.9",
         }
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(REQUEST_TIMEOUT, connect=CONNECT_TIMEOUT),

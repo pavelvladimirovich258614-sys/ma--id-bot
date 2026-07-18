@@ -1,16 +1,16 @@
+"""Stage 1 tests: MAX link normalization and config fallback."""
+
 from __future__ import annotations
 
 import asyncio
 import importlib
 import os
-import unittest
 import sys
-from pathlib import Path
+import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
+sys.path.insert(0, "/opt/ma--id-bot")
 
 
 class TestNormalizeMaxLink(unittest.TestCase):
@@ -265,7 +265,8 @@ class TestHarvestLinkConfigFallback(unittest.TestCase):
         with patch("handlers.messages.clear_harvest_state") as mock_clear, \
              patch("handlers.messages._schedule_discovered_entity_save") as mock_save, \
              patch("handlers.messages._delete_original_message") as mock_delete, \
-             patch("handlers.messages.id_harvest_keyboard", return_value="keyboard"):
+             patch("handlers.messages.id_harvest_keyboard", return_value="keyboard"), \
+             patch("handlers.messages.resolve_public_max_link", return_value=None):
             result = asyncio.run(
                 _handle_harvest_link(event, message, "https://max.ru/id752703975446_biz")
             )

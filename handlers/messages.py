@@ -18,7 +18,6 @@ from maxapi.types.attachments.sticker import Sticker
 
 from config import CHANNEL_CHAT_ID, CHANNEL_ID, CHANNEL_LINK
 from database.postgres_storage import save_discovered_entity
-from services.public_max_page_resolver import resolve_public_max_link
 from handlers.callbacks import (
     WAITING_FOR_FORWARD,
     WAITING_FOR_LINK,
@@ -28,8 +27,6 @@ from handlers.callbacks import (
 )
 from keyboards.main_menu import dismiss_keyboard, id_harvest_keyboard
 from middleware.subscription import require_subscription
-
-from handlers.admin import route_admin_message
 
 logger = logging.getLogger(__name__)
 
@@ -380,42 +377,33 @@ async def _handle_harvest_link(
             chat_info = await event.bot.get_chat_by_link(link=search_query)
     except Exception as error:
         if _is_chat_not_found_or_restricted(error):
-            public_info = await resolve_public_max_link(search_query)
-            if public_info is not None:
-                chat_info = type("Chat", (), {})()
-                chat_info.chat_id = public_info["bot_chat_id"]
-                chat_info.title = public_info.get("title") or "Канал"
-                chat_info.type = "chat"
-                chat_info.link = search_query
-        if chat_info is None:
-            if _is_chat_not_found_or_restricted(error):
-                logger.warning(
-                    "Harvest link lookup did not find accessible object: "
-                    f"link={text}; query={search_query}; error={error}"
-                )
-                response_text = (
-                    "❌ MAX API не смог определить ID по этой публичной ссылке.\n\n"
-                    "Попробуйте один из надёжных способов:"
-                    "\n• перешлите сообщение из канала или чата;"
-                    "\n• добавьте бота в чат или канал;"
-                    "\n• используйте «ID по сообщению»."
-                )
-                await _send_feedback(
-                    message,
-                    response_text,
-                    attachments=[id_harvest_keyboard()],
-                )
-                return True
-            logger.error(
-                "Unexpected harvest link lookup error: "
-                f"link={text}; query={search_query}; error={error}",
-                exc_info=True,
+            logger.warning(
+                "Harvest link lookup did not find accessible object: "
+                f"link={text}; query={search_query}; error={error}"
+            )
+            response_text = (
+                "❌ MAX API не смог определить ID по этой публичной ссылке.\n\n"
+                "Попробуйте один из надёжных способов:"
+                "\n• перешлите сообщение из канала или чата;"
+                "\n• добавьте бота в чат или канал;"
+                "\n• используйте «ID по сообщению»."
             )
             await _send_feedback(
                 message,
-                "❌ Не удалось получить данные объекта из-за временной ошибки API.",
+                response_text,
+                attachments=[id_harvest_keyboard()],
             )
             return True
+        logger.error(
+            "Unexpected harvest link lookup error: "
+            f"link={text}; query={search_query}; error={error}",
+            exc_info=True,
+        )
+        await _send_feedback(
+            message,
+            "❌ Не удалось получить данные объекта из-за временной ошибки API.",
+        )
+        return True
 
     chat_id = _get_field(chat_info, 'chat_id', 'id')
     title = _plain_text(_get_field(chat_info, 'title'), "Без названия")
@@ -741,11 +729,6 @@ def register_message_handler(dp):
             user_id = getattr(getattr(event, 'from_user', None), 'user_id', None)
             harvest_state = get_harvest_state(user_id) if user_id else None
             message_text = (getattr(message.body, 'text', None) or '').strip()
-
-            # Админ-маршрутизация: активная админ-сессия обрабатывается
-            # здесь и только здесь (один путь, без catch-all handler).
-            if user_id and await route_admin_message(event):
-                return
 
             if harvest_state == WAITING_FOR_LINK:
                 await _handle_harvest_link(event, message, message_text)
